@@ -1,0 +1,38 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  // LOCAL CANDIDATE ONLY. No remote resource IDs, routes or existing secrets.
+  // This is the replacement Wallet Core entrypoint, not a third domain service.
+  "name": "gatopago-wallet-core-local",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-08",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "vars": {
+    "CREATION_QUEUE_NAME": "gatopago-wallet-v3-creation-local",
+    "GATOPAGO_ENVIRONMENT": "staging",
+    "FIREBASE_PROJECT_ID": "unprovisioned",
+    "AUTH_IP_REQUESTS_PER_HOUR": "120",
+    "AUTH_GLOBAL_REQUESTS_PER_HOUR": "2000",
+    "PUBLIC_LOOKUP_IP_REQUESTS_PER_HOUR": "120",
+    "PUBLIC_LOOKUP_GLOBAL_REQUESTS_PER_HOUR": "2000"
+  },
+  "d1_databases": [{
+    "binding": "WALLET_DB",
+    "database_name": "gatopago-wallet-v3-local",
+    "database_id": "00000000-0000-0000-0000-000000000000",
+    "migrations_dir": "migrations",
+    "remote": false
+  }],
+  "queues": {
+    "producers": [{ "binding": "CREATION_JOBS", "queue": "gatopago-wallet-v3-creation-local", "remote": false }],
+    "consumers": [{ "queue": "gatopago-wallet-v3-creation-local", "max_batch_size": 2,
+      "max_batch_timeout": 1, "max_concurrency": 2, "max_retries": 3, "retry_delay": 60,
+      "dead_letter_queue": "gatopago-wallet-v3-creation-dlq-local" }]
+  },
+  "triggers": { "crons": ["* * * * *"] },
+  "observability": {
+    "enabled": true,
+    "logs": { "enabled": true, "invocation_logs": false }
+  }
+}

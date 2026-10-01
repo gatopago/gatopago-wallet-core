@@ -1,0 +1,33 @@
+# Copy this entire project to its repository root; no sibling checkout is required.
+name: Project CI
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CI: "true"
+      GATOPAGO_ENVIRONMENT: staging
+      GATOPAGO_WEB_ORIGIN: https://staging.gatopago.com
+      GATOPAGO_API_ORIGIN: https://api.staging.gatopago.com
+      GATOPAGO_BUSINESS_ORIGIN: https://business.staging.gatopago.com
+      GATOPAGO_WALLET_NETWORKS: eip155:421614
+      FIREBASE_PROJECT_ID: v3-build-test
+      GATOPAGO_FIREBASE_WEB_API_KEY: AIzaxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+      GATOPAGO_FIREBASE_WEB_APP_ID: "1:123456789:web:0000000000000000000000"
+      GATOPAGO_TURNSTILE_SITE_KEY: 0x00000000000000000000FAKE
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09
+        with:
+          version: v1.7.1
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm verify
+      - run: pnpm audit --prod

@@ -1,0 +1,52 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "gatopago-wallet-core",
+  "account_id": "c26e82cd341803c9136e19e668da67c6",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-08",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "vars": {
+    "GATOPAGO_ENVIRONMENT": "production",
+    "GATOPAGO_WEB_ORIGIN": "https://gatopago.com",
+    "GATOPAGO_API_ORIGIN": "https://api.gatopago.com",
+    "GATOPAGO_BUSINESS_ORIGIN": "https://business.gatopago.com",
+    "GATOPAGO_WALLET_NETWORKS": "eip155:421614",
+    "FIREBASE_PROJECT_ID": "proyecto-prueba-push-firebase",
+    "CREATION_QUEUE_NAME": "gatopago-wallet-core-staging-jobs",
+    "AUTH_IP_REQUESTS_PER_HOUR": "120",
+    "AUTH_GLOBAL_REQUESTS_PER_HOUR": "2000",
+    "PUBLIC_LOOKUP_IP_REQUESTS_PER_HOUR": "120",
+    "PUBLIC_LOOKUP_GLOBAL_REQUESTS_PER_HOUR": "2000"
+  },
+  "routes": [{ "pattern": "api.gatopago.com", "custom_domain": true }],
+  "d1_databases": [{
+    "binding": "WALLET_DB",
+    "database_name": "gatopago-wallet-core-staging",
+    "database_id": "f9aa958c-2c16-4fed-b3e4-a76d9160eb33",
+    "migrations_dir": "migrations"
+  }],
+  "queues": {
+    "producers": [{ "binding": "CREATION_JOBS", "queue": "gatopago-wallet-core-staging-jobs" }],
+    "consumers": [{
+      "queue": "gatopago-wallet-core-staging-jobs",
+      "max_batch_size": 2,
+      "max_batch_timeout": 1,
+      "max_concurrency": 2,
+      "max_retries": 3,
+      "retry_delay": 60,
+      "dead_letter_queue": "gatopago-wallet-core-staging-jobs-dlq"
+    }]
+  },
+  "triggers": { "crons": ["* * * * *"] },
+  "migrations": [
+    { "tag": "v1_event_job_scheduler", "new_sqlite_classes": ["EventJobScheduler"] },
+    { "tag": "v2_rpc_admission", "new_sqlite_classes": ["RpcAdmissionController"] },
+    { "tag": "v3_wallet_core", "deleted_classes": ["EventJobScheduler", "RpcAdmissionController"] }
+  ],
+  "observability": {
+    "enabled": true,
+    "logs": { "enabled": true, "invocation_logs": false }
+  }
+}

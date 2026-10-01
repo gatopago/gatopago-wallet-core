@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "packages": [
+    {
+      "name": "@gatopago/shared",
+      "version": "3.1.0",
+      "file": "gatopago-shared-3.1.0.tgz",
+      "sha256": "394df60dbfb9d722ce80b3aaa8d1f422f7411be9c092e45c995348dc2c94197b",
+      "producer": "shared"
+    },
+    {
+      "name": "@gatopago/environment",
+      "version": "3.1.0",
+      "file": "gatopago-environment-3.1.0.tgz",
+      "sha256": "924ba08744d2e7f5e5e12c266b4767ca4f419b85de7f5cf2bdf2992e090703d1",
+      "producer": "packages/environment"
+    },
+    {
+      "name": "@gatopago/test-fixtures",
+      "version": "3.1.0",
+      "file": "gatopago-test-fixtures-3.1.0.tgz",
+      "sha256": "520b380bb4badcdc68d2e6dbf66121d71bfeedd6d55a019e4bf8ca5a6ab206cb",
+      "producer": "packages/test-fixtures"
+    },
+    {
+      "name": "@gatopago/contract-artifacts",
+      "version": "3.1.0",
+      "file": "gatopago-contract-artifacts-3.1.0.tgz",
+      "sha256": "c9e86c48f8d750696d22a1ce66c01d595613b0c37eab988ed38c49e5301e6abc",
+      "producer": "contracts/release-package"
+    }
+  ]
+}

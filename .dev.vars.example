@@ -1,0 +1,24 @@
+# TYPE GENERATION ONLY: empty placeholders, never credentials.
+# Empty values are used only to generate binding types. See README.md.
+FIREBASE_CUSTOM_TOKEN_SIGNER_JSON=""
+TURNSTILE_SECRET_KEY=""
+AUTH_RATE_LIMIT_PEPPER=""
+
+# Private endpoint map referenced by src/runtime/catalog.ts; never supplied by HTTP/Queue.
+# Required staging keys: arbitrum_sepolia_offchain, arbitrum_sepolia_tenderly.
+# See RUNTIME.md for the two public RPCs; self relay needs no bundler URL.
+WALLET_RPC_ENDPOINTS="{}"
+# Optional operator key for backup gas sponsorship, never a user ADMIN key.
+WALLET_BACKUP_SIGNER_KEY=""
+
+# Dedicated GatoPagoPaymaster sponsor key; never reuse an account or deployment key.
+# Only used when an independently verified paymaster policy is admitted in runtime/catalog.ts.
+WALLET_PAYMASTER_SIGNER_KEY=""
+
+# Dedicated EOA for direct EntryPoint.handleOps delivery, separate from paymaster/backup keys.
+PRIVATE_KEY=""
+
+GATOPAGO_WEB_ORIGIN=""
+GATOPAGO_API_ORIGIN=""
+GATOPAGO_BUSINESS_ORIGIN=""
+GATOPAGO_WALLET_NETWORKS=""

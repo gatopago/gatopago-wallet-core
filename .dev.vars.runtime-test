@@ -1,0 +1,3 @@
+# Tracked non-secret sentinel. Selecting the runtime-test Wrangler environment
+# loads this file instead of a developer's real .dev.vars.
+RUNTIME_TEST_ENV=true
