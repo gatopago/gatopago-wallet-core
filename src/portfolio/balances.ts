@@ -17,6 +17,20 @@ export interface BalanceProfile extends Omit<InspectionProfile, 'rpcUrls'> {
  readonly assetDisplay: Readonly<Record<string, { readonly symbol: string; readonly decimals: number }>>;
 }
 
+/** Reviewed display registry only: no balance, finality or spending permission. */
+export function balanceAssetMetadata(profile: Pick<BalanceProfile, 'assetIds' | 'assetDisplay'>) {
+ if (!Array.isArray(profile.assetIds) || !profile.assetIds.length || profile.assetIds.length > 32
+  || new Set(profile.assetIds).size !== profile.assetIds.length || !profile.assetDisplay
+  || Object.keys(profile.assetDisplay).length !== profile.assetIds.length) throw new Error('BALANCE_METADATA_UNAVAILABLE');
+ return profile.assetIds.map(asset_id => {
+  const display = profile.assetDisplay[asset_id];
+  if (!Object.hasOwn(profile.assetDisplay, asset_id) || !display || typeof display.symbol !== 'string'
+   || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,15}$(?![\s\S])/.test(display.symbol)
+   || !Number.isInteger(display.decimals) || display.decimals < 0 || display.decimals > 255) throw new Error('BALANCE_METADATA_UNAVAILABLE');
+  return Object.freeze({ asset_id, symbol: display.symbol, decimals: display.decimals });
+ });
+}
+
 /** Authenticated internal read. No public address/profile/asset override, writes,
  * reservation or signing. An owned finalized balance is NOT a spendable budget:
  * security, pending debits, token semantics and fee policy remain separate gates.
@@ -32,11 +46,7 @@ export async function inspectOwnedWalletBalances(repository: { ownedAccount(wall
   const matching = profiles.filter((p) => p.digest === owned.deployment_manifest_sha256);
   if (matching.length !== 1) throw new Error('BALANCE_PROFILE_UNAVAILABLE');
   const profile = matching[0], manifest = loadPinnedDeploymentManifest(profile.document, profile.digest);
-  if (Object.keys(profile.assetDisplay).length !== profile.assetIds.length || profile.assetIds.some((id) => {
-   const display = profile.assetDisplay[id];
-   return !Object.hasOwn(profile.assetDisplay, id) || !display || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,15}$(?![\s\S])/.test(display.symbol)
-    || !Number.isInteger(display.decimals) || display.decimals < 0 || display.decimals > 255;
-  })) throw new Error('BALANCE_METADATA_UNAVAILABLE');
+  balanceAssetMetadata(profile);
   const peers = validateRpcProviders(profile.providers);
   if (manifest.network_id !== owned.network_id || manifest.lifecycle_status !== 'deployed'
    || !isAddressEqual(predictAccountAddress(manifest.components.factory.address, owned.account_id, manifest.proxy.init_code_hash), owned.address)) {

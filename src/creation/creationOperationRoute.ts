@@ -34,12 +34,14 @@ export function createCreationOperationRoute(dependencies: {
 	readonly profiles: readonly (CreationProfilePin & { readonly environment: Environment['environment'] })[];
 	readonly requireFreshDeployment: (pin: CreationProfilePin, signal: AbortSignal) => Promise<void>;
 	readonly sponsor?: (pin: CreationProfilePin, database: D1Database, identity: Principal, signal: AbortSignal) => GasSponsor | undefined;
+	/** Server-admitted ceiling for an empty preparation request. Not a spending grant. */
+	readonly automaticGasCap?: (pin: CreationProfilePin, initial: Initial, signal: AbortSignal) => Promise<bigint>;
 	readonly quoteGas: (pin: CreationProfilePin, initial: Initial, cap: bigint, signal: AbortSignal) => Promise<CreationGasTerms>;
 }) {
 	const profiles = dependencies.profiles.map((p) => Object.freeze({ pin: Object.freeze({ document: p.document, digest: p.digest }),
 		environment: p.environment, deployment: loadPinnedCreationProfile(p.document, p.digest).deployment }));
 	if (profiles.length > 32 || new Set(profiles.map((p) => `${p.environment}:${p.pin.digest}`)).size !== profiles.length) throw new Error('Invalid creation catalog');
-	const observe = dependencies.requireFreshDeployment, quote = dependencies.quoteGas;
+	const observe = dependencies.requireFreshDeployment, quote = dependencies.quoteGas, automaticCap = dependencies.automaticGasCap;
 	return async function route(request: Request, env: AuthBindings, manifest: Environment): Promise<Response> {
 		let config: Environment;
 		try { config = validateIdentityConfig(env, manifest); }
@@ -73,7 +75,8 @@ export function createCreationOperationRoute(dependencies: {
 				AbortSignal.any([signal, AbortSignal.timeout(5000)])); }
 			catch (error) { return respond(error instanceof ResponseBodyTooLargeError ? 413 : 400, { error_code: 'INVALID_CREATION_REQUEST' }); }
 			let cap: bigint | undefined, proof;
-			try { if (match[2]) proof = parseInitializationProof(body); else cap = parseCreationCapRequest(body); }
+			const automatic = !match[2] && body !== null && typeof body === 'object' && !Array.isArray(body) && Object.keys(body).length === 0;
+			try { if (match[2]) proof = parseInitializationProof(body); else if (!automatic) cap = parseCreationCapRequest(body); }
 			catch { return respond(400, { error_code: 'INVALID_CREATION_REQUEST' }); }
 			const initial = await new InitializationRepository(env.WALLET_DB, principal, scope, pins).readAuthorized(id);
 			const profile = available.find((p) => p.pin.digest === initial.input.expectedDigest);
@@ -85,9 +88,15 @@ export function createCreationOperationRoute(dependencies: {
 			if (!match[2]) {
 				if (existing) {
 					// A lost response cannot silently obtain another price or signing digest.
-					if (existing.terms.maximumGasCharge !== cap) throw new CreationOperationError('CREATION_CONFLICT');
+					if (!automatic && existing.terms.maximumGasCharge !== cap) throw new CreationOperationError('CREATION_CONFLICT');
 				} else {
 					if (Math.floor(Date.now() / 1000) >= initial.input.validUntil) throw new CreationOperationError('CREATION_EXPIRED');
+					if (automatic) {
+						if (!automaticCap) throw new Error('Automatic creation quote unavailable');
+						const admitted = await abortable(automaticCap(profile.pin, initial, signal), signal); signal.throwIfAborted();
+						if (typeof admitted !== 'bigint') throw new Error('Invalid automatic creation cap');
+						cap = parseCreationCapRequest({ maximum_gas_charge: admitted.toString() });
+					}
 					await abortable(observe(profile.pin, signal), signal); signal.throwIfAborted();
 					let terms = await abortable(quote(profile.pin, initial, cap!, signal), signal); signal.throwIfAborted();
 					if (terms.maximumGasCharge !== cap) throw new Error('Quote changed approved cap');
@@ -95,7 +104,7 @@ export function createCreationOperationRoute(dependencies: {
 						.every((value) => typeof value === 'bigint' && value > 0n && value < (1n << 120n))
 						&& (terms.verificationGasLimit + terms.callGasLimit + terms.preVerificationGas) * terms.maxFeePerGas > cap!) {
 						// A small user cap is not provider downtime and is never raised silently.
-						return respond(422, { error_code: 'CREATION_CAP_TOO_LOW' });
+						return respond(automatic ? 503 : 422, { error_code: automatic ? 'CREATION_UNAVAILABLE' : 'CREATION_CAP_TOO_LOW' });
 					}
 					const sponsor = dependencies.sponsor?.(profile.pin, env.WALLET_DB, principal, signal);
                     if (sponsor) {

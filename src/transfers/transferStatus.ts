@@ -1,13 +1,51 @@
-import { deploymentDocumentDigest, requireHash } from '@gatopago/shared/v3/deployment';
+import { deploymentDocumentDigest, loadPinnedDeploymentManifest, requireHash } from '@gatopago/shared/v3/deployment';
 import { assertFinalityAssessment } from '@gatopago/shared/v3/finality';
 import type { ResourceId } from '@gatopago/shared/v3/primitives';
 import type { Principal } from '../auth/principal';
 import { TransferNonceReservationRepository } from './transferNonceReservation';
-import { WalletAccessError } from '../accounts/repository';
+import { WalletAccessError, WalletRepository } from '../accounts/repository';
+import { writeTransferDraft } from '@gatopago/shared/v3/transfer-review-record';
+import type { Hex } from 'viem';
+import type { AccountContextProfile } from '../accounts/accountContext';
+import { balanceAssetMetadata } from '../portfolio/balances';
 
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('TRANSFER_STATUS_INVALID');
   return value as Record<string, unknown>;
+}
+
+/** Recover a lost command response using a non-authorizing consent locator.
+ * The reservation remains authoritative even after its preparation is purged.
+ * Return only an unsigned review and the verified historical status. Reading
+ * never confirms, dispatches, releases a reservation, or returns saved proofs. */
+export async function restoreOwnedTransfer(database: D1Database, identityInput: Principal,
+  walletId: ResourceId<'wallet'>, accountId: ResourceId<'walletAccount'>, digest: Hex,
+  resolveProfiles: () => readonly AccountContextProfile[] = () => []) {
+  requireHash(digest);
+  const identity = Object.freeze({ ...identityInput });
+  const stored = await new TransferNonceReservationRepository(database, identity).findOwnedByConsent(walletId, accountId, digest);
+  if (!stored) {
+    await new WalletRepository(database, identity).ownedAccount(walletId, accountId);
+    return Object.freeze({ schema_version: 1, consent_digest: digest, review_json: null, review_sha256: null, status: null, asset_metadata: null,
+      checked_at: Math.floor(Date.now() / 1000) });
+  }
+  const status = await readOwnedTransferStatus(database, identity, walletId, accountId, stored.id);
+  if (status.userop_hash !== stored.candidate.userOpHash) throw new Error('TRANSFER_STATUS_CHANGED');
+  const { request, context, policy, scope, prepared_at } = stored.review;
+  const draft = writeTransferDraft({ request, context, policy, scope, prepared_at });
+  // Resolve only after ownership/status checks. Reuse the reviewed runtime asset
+  // registry, never a current balance or caller-supplied decimals/provider data.
+  const profiles = resolveProfiles();
+  if (profiles.length > 32) throw new Error('TRANSFER_METADATA_UNAVAILABLE');
+  const matches = profiles.filter(p => p.digest === stored.candidate.deployment_digest);
+  if (matches.length !== 1) throw new Error('TRANSFER_METADATA_UNAVAILABLE');
+  const profile = matches[0], manifest = loadPinnedDeploymentManifest(profile.document, profile.digest);
+  if (manifest.network_id !== request.network_id || !profile.assetIds || !profile.assetDisplay) throw new Error('TRANSFER_METADATA_UNAVAILABLE');
+  const needed = new Set([request.asset_id, context.native_asset_id]);
+  const metadata = balanceAssetMetadata({ assetIds: profile.assetIds, assetDisplay: profile.assetDisplay }).filter(a => needed.has(a.asset_id));
+  if (metadata.length !== needed.size) throw new Error('TRANSFER_METADATA_UNAVAILABLE');
+  return Object.freeze({ schema_version: 1, consent_digest: digest, review_json: draft.json, review_sha256: draft.digest, status, asset_metadata: metadata,
+    checked_at: Math.floor(Date.now() / 1000) });
 }
 
 /** Authenticated historical view only. Never returns signed operations, claim

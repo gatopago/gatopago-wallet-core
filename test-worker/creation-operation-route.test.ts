@@ -14,6 +14,9 @@ import { InitializationRepository } from '../src/creation/initialization';
 import { initializationFixture } from '@gatopago/test-fixtures/v3-initialization';
 import { fixtureHash } from '@gatopago/test-fixtures/v3-inspection';
 import { clearIdentityKeys, projectId, testIdentitySigner } from './identity.fixture';
+import { createWalletRuntime } from '../src/runtime';
+import { runtimeFixture } from '../test/runtime.fixture';
+import * as runtimeFinality from '../src/runtime/finality';
 
 const creationOperationRoute = createCreationOperationRoute({ profiles: [], async requireFreshDeployment() { throw new Error('Unexpected observer'); }, async quoteGas() { throw new Error('Unexpected quote'); } });
 
@@ -67,6 +70,56 @@ beforeEach(async () => {
 afterEach(async () => { vi.restoreAllMocks(); vi.unstubAllGlobals(); await env.WALLET_DB.exec('DROP TRIGGER IF EXISTS creation_http_outbox_fail;'); });
 
 describe('first creation operation HTTP boundary (synthetic quote/observer, real JWT/P256/D1)', () => {
+  it('prepares automatic server terms and restores exact saved bytes without repricing after a lost response', async () => {
+    const t = await start(), c = candidate(), ceiling = vi.fn(async () => gas().maximumGasCharge);
+    const route = createCreationOperationRoute({ ...c.deps, automaticGasCap: ceiling });
+    const response = await route(await request(path(t.id), {}), env, config);
+    expect(response.status).toBe(200);
+    const first = parseCreationPreview(await response.json(), t.consent);
+    expect(first.terms.maximumGasCharge).toBe(gas().maximumGasCharge);
+    expect((await queued()).results).toHaveLength(0);
+    ceiling.mockRejectedValue(new Error('policy unavailable')); c.quote.mockRejectedValue(new Error('do not reprice')); c.observe.mockClear();
+    const repeat = parseCreationPreview(await (await route(await request(path(t.id), {}), env, config)).json(), t.consent);
+    expect(repeat.candidate).toEqual(first.candidate); expect(ceiling).toHaveBeenCalledOnce();
+    expect(c.quote).toHaveBeenCalledOnce(); expect(c.observe).not.toHaveBeenCalled();
+    c.observe.mockResolvedValue(undefined);
+    expect((await route(await request(`${path(t.id)}/authorize`, proof(first.candidate.digest)), env, config)).status).toBe(200);
+    expect((await queued()).results).toHaveLength(1);
+  });
+  it('uses the composed runtime ceiling, not a browser default or an unbounded fee', async () => {
+    const t = await start(), settings = runtimeFixture(f.pin);
+    const observe = vi.spyOn(runtimeFinality, 'requireFreshCreationDeployment').mockResolvedValue(undefined);
+    const runtime = createWalletRuntime({ ...env, ...settings.bindings }, config, settings.catalog);
+    const result = await runtime.creationOperation(await request(path(t.id), {}), env, config);
+    expect(result.status).toBe(200);
+    const preview = parseCreationPreview(await result.json(), t.consent);
+    expect(preview.terms.maximumGasCharge).toBe(preview.candidate.maximumEntryPointCharge);
+    expect(preview.terms.maximumGasCharge).toBe(gas().maximumGasCharge);
+    expect(observe).toHaveBeenCalledOnce(); expect((await queued()).results).toHaveLength(0);
+  });
+  it.each([0n, -1n, 1n << 256n])('refuses invalid automatic ceiling %s without provider observation or persistence', async ceiling => {
+    const t = await start(), c = candidate();
+    const route = createCreationOperationRoute({ ...c.deps, automaticGasCap: async () => ceiling });
+    expect((await route(await request(path(t.id), {}), env, config)).status).toBe(503);
+    expect(c.observe).not.toHaveBeenCalled(); expect(c.quote).not.toHaveBeenCalled(); expect(await count()).toBe(0);
+  });
+  it('keeps automatic pricing closed when not configured or when it exceeds the admitted ceiling', async () => {
+    const t = await start(), c = candidate();
+    expect((await c.run(await request(path(t.id), {}), env, config)).status).toBe(503);
+    const route = createCreationOperationRoute({ ...c.deps, automaticGasCap: async () => 1n });
+    const result = await route(await request(path(t.id), {}), env, config);
+    expect(result.status).toBe(503); expect(await result.json()).toEqual({ error_code: 'CREATION_UNAVAILABLE' });
+    expect(await count()).toBe(0); expect((await queued()).results).toHaveLength(0);
+  });
+  it('requires owner consent before automatic pricing and rejects added caller-selected terms', async () => {
+    const t = await start(false), c = candidate(), ceiling = vi.fn(async () => gas().maximumGasCharge);
+    const route = createCreationOperationRoute({ ...c.deps, automaticGasCap: ceiling });
+    expect((await route(await request(path(t.id), {}), env, config)).status).toBe(409);
+    const unauth = await request(path(t.id), {}); unauth.headers.delete('Authorization');
+    expect((await route(unauth, env, config)).status).toBe(401);
+    expect((await route(await request(path(t.id), { paymaster: 'injected' }), env, config)).status).toBe(400);
+    expect(ceiling).not.toHaveBeenCalled(); expect(c.observe).not.toHaveBeenCalled(); expect(await count()).toBe(0);
+  });
 	it('mounts in the replacement entrypoint but keeps the unprovisioned release closed', async () => {
 		const id = createResourceId('operation');
 		expect((await exports.default.fetch(await request(path(id), cap()))).status).toBe(503);
@@ -97,8 +150,8 @@ describe('first creation operation HTTP boundary (synthetic quote/observer, real
     const sponsor = { terms: (after: number, until: number) => ({ address: `0x${'12'.repeat(20)}` as const,
       verificationGasLimit: '100000', postOpGasLimit: '0', data: sponsorshipData(after, until, `0x${'ab'.repeat(65)}`) }),
       authorize: vi.fn(async (_operation: unknown, after: number, until: number) => sponsor.terms(after, until)) };
-    const route = createCreationOperationRoute({ ...c.deps, sponsor: () => sponsor });
-    const body = { maximum_gas_charge: '2350000000000000' };
+    const route = createCreationOperationRoute({ ...c.deps, sponsor: () => sponsor, automaticGasCap: async () => 2350000000000000n });
+    const body = {};
     const response = await route(await request(path(t.id), body), env, config);
     expect(response.status).toBe(200);
     const preview = parseCreationPreview(await response.json(), t.consent);

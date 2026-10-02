@@ -222,7 +222,8 @@ describe('V3 authenticated ownership → pinned inspection integration', () => {
 		const profile = { document: scenario.input.document, digest: scenario.input.expectedDigest,
 			finalityPolicy: scenario.pin, finalityEvidence: scenario.source, assetIds: [], assetDisplay: {},
 			providers: [{ operatorId: 'private-provider', url: 'https://rpc.example.test/DO_NOT_SERIALIZE' }] };
-		const response = await walletReadRoute(request, env, config, async () => [profile]);
+		const balances = vi.fn(async () => { throw new Error('Financial RPC unavailable'); });
+		const response = await walletReadRoute(request, env, config, balances, undefined, () => [profile]);
 		expect(response.status).toBe(200);
 		expect(await response.json()).toEqual({ schema_version: 1, wallet_id: seeded.walletId, wallet_account_id: seeded.accountId,
 			network_id: scenario.manifest.network_id, account_id: scenario.state.observation.accountId,
@@ -230,7 +231,22 @@ describe('V3 authenticated ownership → pinned inspection integration', () => {
 			spend_readiness: 'not_assessed', receive_enabled: false, send_enabled: false });
 		expect(response.headers.get('Cache-Control')).toBe('no-store');
 		expect(fetcher).not.toHaveBeenCalled();
+		expect(balances).not.toHaveBeenCalled();
 		expect(await env.WALLET_DB.prepare('SELECT deployment_state FROM wallet_accounts').first('deployment_state')).toBe('active');
+	});
+	it('resolves context configuration lazily after ownership and never for unrelated read paths', async () => {
+		const seeded = await seedAccount(await session()); await session('test-user-b');
+		const profiles = vi.fn(() => { throw new Error('Unavailable configuration'); });
+		const balances = vi.fn(async () => { throw new Error('Unexpected financial read'); });
+		const route = (request: Request) => walletReadRoute(request, env, config, balances, undefined, profiles);
+		expect((await route(await input('/session'))).status).toBe(200);
+		expect((await route(await input('/wallets'))).status).toBe(200);
+		expect((await route(await input(`/wallets/${seeded.walletId}/accounts`))).status).toBe(200);
+		expect((await route(await input(`/wallets/${seeded.walletId}/accounts/${seeded.accountId}/context`, 'GET', 'test-user-b'))).status).toBe(404);
+		expect(profiles).not.toHaveBeenCalled(); expect(balances).not.toHaveBeenCalled();
+		const result = await route(await input(`/wallets/${seeded.walletId}/accounts/${seeded.accountId}/context`));
+		expect(result.status).toBe(503); expect(profiles).toHaveBeenCalledOnce();
+		expect(await result.json()).toEqual({ error_code: 'SERVICE_UNAVAILABLE' });
 	});
 	it('protects context reads with identity, ownership, method and query boundaries', async () => {
 		const seeded = await seedAccount(await session()); await session('test-user-b');
@@ -253,7 +269,7 @@ describe('V3 authenticated ownership → pinned inspection integration', () => {
 		if (fault === 'archive') await env.WALLET_DB.prepare("UPDATE wallets SET status = 'archived'").run();
 		if (fault === 'disabled') await env.WALLET_DB.prepare('UPDATE users SET disabled_at = ?').bind(now).run();
 		const response = await walletReadRoute(await input(`/wallets/${seeded.walletId}/accounts/${seeded.accountId}/context`), env, config,
-			async () => fault === 'missing' ? [] : fault === 'duplicate' ? [profile, profile] : [profile]);
+			async () => [], undefined, () => fault === 'missing' ? [] : fault === 'duplicate' ? [profile, profile] : [profile]);
 		expect(response.status).toBe(fault === 'disabled' ? 401 : 503);
 		const body = await response.json();
 		expect(body).not.toHaveProperty('account_id'); expect(body).not.toHaveProperty('deployment');

@@ -9,17 +9,21 @@ import { allowMethods, v3Json as json } from '../http';
 import { WalletAccessError, WalletRepository } from './repository';
 import { inspectOwnedWalletBalances, type BalanceProfile } from '../portfolio/balances';
 import { readOwnedTransferStatus } from '../transfers/transferStatus';
-import { readOwnedAccountContext } from './accountContext';
+import { restoreOwnedTransfer } from '../transfers/transferStatus';
+import { requireHash } from '@gatopago/shared/v3/deployment';
+import type { Hex } from 'viem';
+import { readOwnedAccountContext, type AccountContextProfile } from './accountContext';
 
 const SESSION_PATH = '/app/v1/session';
 const WALLETS_PATH = '/app/v1/wallets';
 const BALANCES_PATH = /^\/app\/v1\/wallets\/[^/]+\/accounts\/[^/]+\/balances$(?![\s\S])/;
 const CONTEXT_PATH = /^\/app\/v1\/wallets\/[^/]+\/accounts\/[^/]+\/context$(?![\s\S])/;
 const TRANSFER_PATH = /^\/app\/v1\/wallets\/[^/]+\/accounts\/[^/]+\/transfers\/[^/]+$(?![\s\S])/;
+const TRANSFER_RESTORE_PATH = /^\/app\/v1\/wallets\/[^/]+\/accounts\/[^/]+\/transfer-consents\/[^/]+$(?![\s\S])/;
 const allowedHeaders = ['Authorization', 'Content-Type', ...Object.values(CLIENT_RELEASE_HEADERS)];
 
 export function isWalletReadPath(path: string): boolean {
-	return path === SESSION_PATH || path === WALLETS_PATH || /^\/app\/v1\/wallets\/[^/]+\/accounts$(?![\s\S])/.test(path) || BALANCES_PATH.test(path) || TRANSFER_PATH.test(path) || CONTEXT_PATH.test(path);
+	return path === SESSION_PATH || path === WALLETS_PATH || /^\/app\/v1\/wallets\/[^/]+\/accounts$(?![\s\S])/.test(path) || BALANCES_PATH.test(path) || TRANSFER_PATH.test(path) || TRANSFER_RESTORE_PATH.test(path) || CONTEXT_PATH.test(path);
 }
 
 function page(search: URLSearchParams, kind: ResourceKind) {
@@ -35,7 +39,8 @@ function page(search: URLSearchParams, kind: ResourceKind) {
  * Configuration comes from the versioned environment, never request JSON/headers.
  */
 export async function walletReadRoute(request: Request, env: AuthBindings, manifest: Environment,
-	resolveBalanceProfiles: (owned: Awaited<ReturnType<WalletRepository['ownedAccount']>>, signal: AbortSignal) => Promise<readonly BalanceProfile[]>, accessProfiles?: ReceivingProfiles): Promise<Response> {
+	resolveBalanceProfiles: (owned: Awaited<ReturnType<WalletRepository['ownedAccount']>>, signal: AbortSignal) => Promise<readonly BalanceProfile[]>, accessProfiles?: ReceivingProfiles,
+	resolveAccountContextProfiles: () => readonly AccountContextProfile[] = () => []): Promise<Response> {
 	let config: Environment;
 	try { config = validateIdentityConfig(env, manifest); }
 	catch { return json(503, { error_code: 'SERVICE_UNAVAILABLE' }); }
@@ -48,18 +53,21 @@ export async function walletReadRoute(request: Request, env: AuthBindings, manif
 	const isWallets = url.pathname === WALLETS_PATH;
 	const isBalances = BALANCES_PATH.test(url.pathname);
 	const isTransfer = TRANSFER_PATH.test(url.pathname);
+	const isRestore = TRANSFER_RESTORE_PATH.test(url.pathname);
 	const isContext = CONTEXT_PATH.test(url.pathname);
 	let pagination: ReturnType<typeof page> = { limit: 20, after: '' };
 	let walletId: ReturnType<typeof parseResourceId<'wallet'>> | undefined;
 	let accountId: ReturnType<typeof parseResourceId<'walletAccount'>> | undefined;
 	let operationId: ReturnType<typeof parseResourceId<'operation'>> | undefined;
+	let consentDigest: Hex | undefined;
 	try {
 		if (isSession) { if (url.search) throw new Error('No session query'); }
-		else if (isBalances || isTransfer || isContext) {
+		else if (isBalances || isTransfer || isRestore || isContext) {
 			if (url.search) throw new Error('No balance overrides');
 			walletId = parseResourceId('wallet', url.pathname.split('/')[4]);
 			accountId = parseResourceId('walletAccount', url.pathname.split('/')[6]);
 			if (isTransfer) operationId = parseResourceId('operation', url.pathname.split('/')[8]);
+			if (isRestore) { const digest = url.pathname.split('/')[8]; requireHash(digest); consentDigest = digest; }
 		} else {
 			pagination = page(url.searchParams, isWallets ? 'wallet' : 'walletAccount');
 			if (!isWallets) walletId = parseResourceId('wallet', url.pathname.split('/')[4]);
@@ -74,10 +82,20 @@ export async function walletReadRoute(request: Request, env: AuthBindings, manif
 		request.signal.throwIfAborted();
 		const repository = new WalletRepository(env.WALLET_DB, principal);
 		if (isSession) return respond(200, await repository.getSession());
+		if (isRestore) {
+			const restored = await restoreOwnedTransfer(env.WALLET_DB, principal, walletId!, accountId!, consentDigest!, resolveAccountContextProfiles);
+			request.signal.throwIfAborted();
+			return respond(200, restored);
+		}
 		if (isTransfer) return respond(200, await readOwnedTransferStatus(env.WALLET_DB, principal, walletId!, accountId!, operationId!));
-		const balanceProfiles = isContext || isBalances
+		if (isContext) {
+			await repository.ownedAccount(walletId!, accountId!);
+			// Identity pins need no balance/finality RPC. Session access is still
+			// checked above; this projection never enables receiving or spending.
+			return respond(200, await readOwnedAccountContext(repository, walletId!, accountId!, resolveAccountContextProfiles(), request.signal));
+		}
+		const balanceProfiles = isBalances
 			? await resolveBalanceProfiles(await repository.ownedAccount(walletId!, accountId!), request.signal) : [];
-		if (isContext) return respond(200, await readOwnedAccountContext(repository, walletId!, accountId!, balanceProfiles, request.signal));
 		if (isBalances) return respond(200, await inspectOwnedWalletBalances(repository, walletId!, accountId!, balanceProfiles, request.signal));
 		return respond(200, isWallets ? await repository.listWallets(pagination) : await repository.listAccounts(walletId!, pagination));
 	} catch (error) {

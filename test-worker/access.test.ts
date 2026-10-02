@@ -21,6 +21,9 @@ import { parseEnvironment } from '@gatopago/environment';
 import manifests from '@gatopago/environment/environments.json';
 import * as runtimeModule from '../src/runtime';
 import catalog from '../src/runtime/catalog';
+import { createWalletWorker } from '../src/index';
+import { clientMutationHeaders } from '@gatopago/shared/v3/client-release';
+import { runtimeFixture } from '../test/runtime.fixture';
 
 const signal = () => new AbortController().signal;
 const now = () => Math.floor(Date.now() / 1000);
@@ -88,6 +91,35 @@ describe('onchain application-access reconciliation', { timeout: 20_000 }, () =>
     const before = await saved(f.session.user_id);
     await env.WALLET_DB.exec("CREATE TRIGGER access_fail_update BEFORE UPDATE ON users BEGIN SELECT RAISE(ABORT,'cached access must not write'); END");
     f.profiles.mockClear(); expect(await f.sync()).toEqual(result); expect(f.profiles).not.toHaveBeenCalled();
+    expect(await saved(f.session.user_id)).toBe(before);
+  });
+  it('serves the composed identity projection during an RPC outage but keeps balances and expired access closed', async () => {
+    // Reuse the projected creation fixture so the wallet and runtime share the
+    // same admitted deployment. The generic inspection fixture has another pin.
+    const f = await setup(); await f.sync();
+    const settings = runtimeFixture(f.configuration.profiles[0]);
+    const bindings = { ...env, ...settings.bindings };
+    const worker = createWalletWorker(settings.catalog, () => settings.environment);
+    const account = await env.WALLET_DB.prepare('SELECT id,wallet_id FROM wallet_accounts').first<{ id: string; wallet_id: string }>();
+    if (!account) throw new Error('Missing projected account');
+    const signer = await testIdentitySigner(); await seedIdentityKeys(signer.keys, now());
+    const request = async (suffix: string) => new Request(`${settings.environment.api_origin}/app/v1/wallets/${account.wallet_id}/accounts/${account.id}/${suffix}`, {
+      headers: { Origin: settings.environment.web_origin, ...clientMutationHeaders('production'),
+        Authorization: `Bearer ${await signer.token({ sub: f.session.user_id, credential_ref: f.credentialRef })}` } });
+    const before = await saved(f.session.user_id), document = JSON.stringify(f.prepared.profile.deployment);
+    f.fetch.mockRejectedValue(new Error('Private provider diagnostic')); f.fetch.mockClear();
+    const context = await worker.fetch(await request('context'), bindings);
+    expect(context.status).toBe(200);
+    expect(await context.json()).toMatchObject({ deployment: { document, digest: deploymentDocumentDigest(document) },
+      spend_readiness: 'not_assessed', receive_enabled: false, send_enabled: false });
+    expect(f.fetch).not.toHaveBeenCalled();
+    const balances = await worker.fetch(await request('balances'), bindings);
+    expect(balances.status).toBe(503); expect(await balances.json()).toEqual({ error_code: 'SERVICE_UNAVAILABLE' });
+    expect(f.fetch).toHaveBeenCalled(); f.fetch.mockClear(); expect(await saved(f.session.user_id)).toBe(before);
+    // This projection is not an exception to onchain credential revocation.
+    f.advance();
+    const expired = await worker.fetch(await request('context'), bindings);
+    expect(expired.status).toBe(503); expect(f.fetch).toHaveBeenCalled();
     expect(await saved(f.session.user_id)).toBe(before);
   });
   it('retains a key while any owned wallet authorizes it, including an archived wallet', async () => {

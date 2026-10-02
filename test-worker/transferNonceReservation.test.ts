@@ -46,6 +46,7 @@ import * as confirmationCoordinator from '../src/transfers/transferConfirmation'
 import * as deliveryCoordinator from '../src/transfers/transferDelivery';
 import { createTransferRoute } from '../src/transfers/transferRoute';
 import { CLIENT_RELEASE_HEADERS, clientMutationHeaders, CLIENT_RELEASE_ID } from '@gatopago/shared/v3/client-release';
+import { readTransferDraft } from '@gatopago/shared/v3/transfer-review-record';
 
 beforeAll(() => applyD1Migrations(env.WALLET_DB, env.V3_TEST_MIGRATIONS));
 beforeEach(async () => {
@@ -107,6 +108,64 @@ async function deliveryProof(s: Awaited<ReturnType<typeof setup>>, a: Awaited<Re
 }
 
 describe('V3 pre-delivery nonce reservation with real D1', () => {
+  it.each(['native','token','max','lost-confirmation','lost-delivery','expired','draft-purged','absent','foreign','revoked','query','method','origin','digest',
+    'metadata-missing','metadata-duplicate','metadata-pin','metadata-tampered','metadata-asset','metadata-decimals','metadata-symbol','metadata-private'])(
+    'restores a consent locator with read-only D1 ownership: %s', async scenario => {
+      const s = await setup(!['token','metadata-asset'].includes(scenario), true), f = s.f;
+      const authorization = await s.signed('10', f.context.valid_until, { max: scenario === 'max' });
+      const held = scenario === 'absent' ? null : await s.repository().reserve(s.accountId, authorization);
+      if (scenario === 'lost-delivery') await s.repository().beginDelivery(f.request.wallet_id, s.accountId,
+        await deliveryProof(s, authorization, held!.id));
+      if (scenario === 'draft-purged') {
+        // Reservations do not depend on a preparation's retention window.
+        await env.WALLET_DB.prepare('DELETE FROM transfer_preparations WHERE wallet_account_id = ?').bind(s.accountId).run();
+      }
+      if (scenario === 'expired') s.clock.mockReturnValue((f.context.valid_until + 1) * 1000);
+      if (scenario === 'revoked') await env.WALLET_DB.prepare('UPDATE users SET auth_not_before = ? WHERE id = ?')
+        .bind(s.identity.authTime + 1, s.identity.userId).run();
+      const config = parseEnvironment({ ...manifests.production, status:'provisioned', firebase_project_id:'v3-runtime-test' });
+      vi.spyOn(sessionVerifier, 'verifyAppSession').mockResolvedValue(scenario === 'foreign' ? { ...s.identity, userId:'other' } : s.identity);
+      const fetcher = vi.fn(async () => { throw new Error('Unexpected external I/O'); }); vi.stubGlobal('fetch', fetcher);
+      const balanceProfiles = vi.fn(async () => { throw new Error('Unexpected profile resolution'); });
+      const assetIds = [...new Set([f.request.asset_id,f.context.native_asset_id])];
+      const profile = { document:f.approval.security_evidence.document,digest:f.context.deployment_digest,assetIds,
+        assetDisplay:Object.fromEntries(assetIds.map(id => [id,{ symbol:id === f.context.native_asset_id ? 'ETH' : 'USDC',decimals:id === f.context.native_asset_id ? 18 : 6 }])) };
+      if (scenario === 'metadata-pin') profile.digest = `0x${'ef'.repeat(32)}`;
+      if (scenario === 'metadata-tampered') profile.document += ' ';
+      if (scenario === 'metadata-asset') { profile.assetIds = [f.context.native_asset_id]; delete profile.assetDisplay[f.request.asset_id]; }
+      if (scenario === 'metadata-decimals') profile.assetDisplay[f.request.asset_id].decimals = -1;
+      if (scenario === 'metadata-symbol') profile.assetDisplay[f.request.asset_id].symbol = '<script>';
+      if (scenario === 'metadata-private') Reflect.set(profile.assetDisplay[f.request.asset_id],'provider_url','DO_NOT_SERIALIZE');
+      const displayProfiles = vi.fn(() => scenario === 'metadata-missing' ? [] : scenario === 'metadata-duplicate' ? [profile,profile] : [profile]);
+      const root = `/app/v1/wallets/${f.request.wallet_id}/accounts/${s.accountId}/transfer-consents/`;
+      const url = `${config.api_origin}${root}${scenario === 'digest' ? 'invalid' : authorization.digest}${scenario === 'query' ? '?override=yes' : ''}`;
+      const makeRequest = () => new Request(url, { method:scenario === 'method' ? 'POST' : 'GET',
+        headers:{ Origin:scenario === 'origin' ? 'https://wrong.example' : config.web_origin, Authorization:'Bearer synthetic' } });
+      const before = await rows(), response = await walletReadRoute(makeRequest(), { ...env, FIREBASE_PROJECT_ID:'v3-runtime-test' }, config, balanceProfiles, undefined, displayProfiles);
+      expect(response.headers.get('Cache-Control')).toBe('no-store');
+      const expected = { foreign:409, revoked:401, query:400, method:405, origin:403, digest:400,
+        'metadata-missing':503,'metadata-duplicate':503,'metadata-pin':503,'metadata-tampered':503,'metadata-asset':503,'metadata-decimals':503,'metadata-symbol':503 };
+      expect(response.status).toBe(Object.hasOwn(expected, scenario) ? Reflect.get(expected, scenario) : 200);
+      const result = await response.json<Record<string, unknown>>();
+      if (response.status === 200) {
+        expect(result).toMatchObject({ schema_version:1, consent_digest:authorization.digest, checked_at:Math.floor(Date.now()/1000) });
+        if (scenario === 'absent') { expect(result).toMatchObject({ status:null, review_json:null, review_sha256:null, asset_metadata:null }); expect(displayProfiles).not.toHaveBeenCalled(); }
+        else {
+          const draft = readTransferDraft(result.review_json, result.review_sha256);
+          expect(draft.candidate.digest).toBe(authorization.digest); expect(draft.candidate.userOpHash).toBe(authorization.userOpHash);
+          expect(JSON.parse(String(result.review_json)).proofs).toEqual([]);
+          expect(JSON.stringify(result)).not.toContain(authorization.operation.signature);
+          expect(result.status).toMatchObject({ operation_id:held!.id, userop_hash:authorization.userOpHash,
+            status:scenario === 'expired' ? 'expired' : scenario === 'lost-delivery' ? 'delivery_pending' : 'held', send_enabled:false });
+          expect(result.asset_metadata).toEqual(assetIds.map(id => ({ asset_id:id,symbol:id === f.context.native_asset_id ? 'ETH' : 'USDC',decimals:id === f.context.native_asset_id ? 18 : 6 })));
+          expect(JSON.stringify(result)).not.toContain('DO_NOT_SERIALIZE');
+          const repeated = await walletReadRoute(makeRequest(), { ...env, FIREBASE_PROJECT_ID:'v3-runtime-test' }, config, balanceProfiles, undefined, displayProfiles);
+          expect(await repeated.json()).toEqual(result);
+        }
+      }
+      expect((await rows()).results).toEqual(before.results);
+      expect(fetcher).not.toHaveBeenCalled(); expect(balanceProfiles).not.toHaveBeenCalled();
+    });
   it.each(['prepare', 'read', 'confirm', 'deliver', 'origin', 'method', 'query', 'version', 'wallet', 'extra-fields',
     'too-large', 'foreign', 'disabled-network', 'no-profile', 'options', 'bad-cors', 'asset', 'delivery-digest', 'confirm-release', 'deliver-release'])(
     'enforces the authenticated transfer HTTP boundary: %s', async scenario => {

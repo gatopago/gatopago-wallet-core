@@ -1,4 +1,5 @@
 import { loadPinnedCreationProfile } from '@gatopago/shared/v3/initialization';
+import { maximumOperationGasCost } from '@gatopago/shared/v3/paymaster';
 import { createGasSponsor } from '../sponsorship/service';
 import type { Principal } from '../auth/principal';
 import { evmChainId } from '@gatopago/shared/v3/primitives';
@@ -62,6 +63,8 @@ export function createWalletRuntime(env: WalletCoreV3Bindings, environment: Envi
     profiles: networks.map(n => n.transferProfile) }));
   return {
     accountProfiles,
+    accountContextProfiles: networks.map(n => ({ document: n.transferProfile.document, digest: n.transferProfile.digest,
+      assetIds: n.transferProfile.assetIds, assetDisplay: n.transferProfile.assetDisplay })),
     configured: networks.length > 0,
     networks: networks.map(n => ({ network_id: n.deployment.network_id, transport: n.transport.kind,
       relayer_address: n.transport.kind === 'self' ? n.transport.policy.operator : null })),
@@ -79,6 +82,15 @@ export function createWalletRuntime(env: WalletCoreV3Bindings, environment: Envi
     initialization: createInitializationRoute({ accessProfiles: receivingProfiles, profiles: networks, requireFreshDeployment }),
     creationOperation: createCreationOperationRoute({ accessProfiles: receivingProfiles, profiles: networks, requireFreshDeployment,
       sponsor: (pin, database, identity, signal) => sponsor(byPin(pin), database, identity, signal),
+      async automaticGasCap(pin, _initial, signal) {
+        signal.throwIfAborted();
+        const network = byPin(pin), paymaster = network.paymaster;
+        // Reviewed upper bounds, not a simulated price or permission to charge.
+        // Include all admitted paymaster gas when sponsorship is configured.
+        return maximumOperationGasCost({ ...network.creationGas,
+          ...(paymaster ? { paymasterVerificationGasLimit: BigInt(paymaster.verificationGasLimit),
+            paymasterPostOpGasLimit: BigInt(paymaster.postOpGasLimit) } : {}) });
+      },
       async quoteGas(pin, _initial, cap, signal) {
         signal.throwIfAborted();
         const terms = byPin(pin).creationGas;

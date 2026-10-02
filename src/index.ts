@@ -52,7 +52,8 @@ export function createWalletWorker(configuration?: unknown, environment = config
           (owned, signal) => walletRuntime().receivingProfiles(owned, signal));
         if (isWalletReadPath(path)) return await walletReadRoute(request, env, config,
           (owned, signal) => walletRuntime().balanceProfiles(owned, signal),
-          (owned, signal) => walletRuntime().receivingProfiles(owned, signal));
+          (owned, signal) => walletRuntime().receivingProfiles(owned, signal),
+          () => walletRuntime().accountContextProfiles);
         const resolved = walletRuntime();
         if (path === '/app/v1/health/ready') return Response.json({ service: 'gatopago-wallet-core', configured: resolved.configured,
           capabilities: resolved.capabilities, networks: resolved.networks },

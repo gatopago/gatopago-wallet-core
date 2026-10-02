@@ -3,13 +3,17 @@ import { predictAccountAddress } from '@gatopago/shared/v3/authorizations';
 import { loadPinnedDeploymentManifest, requireHash } from '@gatopago/shared/v3/deployment';
 import type { ResourceId } from '@gatopago/shared/v3/primitives';
 import { WalletAccessError, type WalletRepository } from './repository';
+import type { BalanceProfile } from '../portfolio/balances';
+
+export type AccountContextProfile = Pick<BalanceProfile, 'document' | 'digest'>
+ & Partial<Pick<BalanceProfile, 'assetIds' | 'assetDisplay'>>;
 
 /** Owner-only identity projection for Consumer selection. A trusted server release
  * supplies the public deployment documents. Never serialize a provider profile or
  * commitments. This does not inspect chain state or grant receive/spend authority. */
 export async function readOwnedAccountContext(repository: Pick<WalletRepository, 'ownedAccount'>,
  walletId: ResourceId<'wallet'>, accountId: ResourceId<'walletAccount'>,
- profilesInput: readonly { readonly document: string; readonly digest: string }[], signal: AbortSignal) {
+ profilesInput: readonly AccountContextProfile[], signal: AbortSignal) {
  if (profilesInput.length > 32) throw new Error('ACCOUNT_PROFILE_UNAVAILABLE');
  const profiles = profilesInput.map(({ document, digest }) => ({ document, digest }));
  signal.throwIfAborted();
