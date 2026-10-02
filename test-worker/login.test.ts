@@ -8,12 +8,12 @@ import { issueInvitation } from './invitations.fixture';
 import { createSessionToken } from '../src/auth/customToken';
 import { authentication, credential, generateKey } from './passkey.fixture';
 
-const scope = { rpId: 'staging.gatopago.com', origin: 'https://staging.gatopago.com' };
+const scope = { rpId: 'gatopago.com', origin: 'https://gatopago.com' };
 const login = () => new LoginRepository(env.WALLET_DB, scope);
 async function user(synchronized = false) {
   const now = Math.floor(Date.now() / 1000), key = generateKey();
   const invitation = await issueInvitation(env.WALLET_DB, 'operator', now + 3600);
-  const registration = new RegistrationRepository(env.WALLET_DB, 'staging', scope);
+  const registration = new RegistrationRepository(env.WALLET_DB, 'production', scope);
   const prepared = await registration.prepare({ invite: invitation.token, name: 'Daniel', username: 'daniel' });
   const proof = credential(prepared, { key, ...(synchronized ? { createFlags: 0x5d, proofFlags: 0x1d, proofCount: 0 } : {}) });
   const principal = await registration.complete(prepared.request_id, proof);

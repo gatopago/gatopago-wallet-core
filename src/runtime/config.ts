@@ -1,8 +1,7 @@
 import type { OperationTransport } from '../execution/operationTransport';
 import type { SponsorPolicy } from '../sponsorship/service';
 import { parsePaymasterTerms, sponsorshipData } from '@gatopago/shared/v3/paymaster';
-import { getAddress } from 'viem';
-import { isAddress, type Hex } from 'viem';
+import { getAddress, isAddress, type Hex } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import type { Environment } from '@gatopago/environment';
 import { deploymentDocumentDigest, requireHash } from '@gatopago/shared/v3/deployment';
@@ -56,8 +55,8 @@ export function maximumGasCharge(terms: Omit<CreationGasTerms, 'maximumGasCharge
 export function configureWalletNetworks(catalog: unknown, environment: Environment,
   bindings: Pick<WalletCoreV3Bindings, 'WALLET_RPC_ENDPOINTS' | 'WALLET_BACKUP_SIGNER_KEY'> & { PRIVATE_KEY?: string; WALLET_PAYMASTER_SIGNER_KEY?: string }) {
   try {
-    const source = fields(catalog, ['schema_version', 'staging', 'production']);
-    if (source.schema_version !== 1 || !Array.isArray(source.staging) || !Array.isArray(source.production)) throw invalid();
+    const source = fields(catalog, ['schema_version', 'production']);
+    if (source.schema_version !== 1 || !Array.isArray(source.production)) throw invalid();
     const inputs = source[environment.environment];
     if (!Array.isArray(inputs) || inputs.length > 8 || (inputs.length && environment.status !== 'provisioned')) throw invalid();
     const endpoints = object(JSON.parse(bindings.WALLET_RPC_ENDPOINTS || '{}'));
@@ -70,7 +69,7 @@ export function configureWalletNetworks(catalog: unknown, environment: Environme
     if (key && !/^0x[0-9a-fA-F]{64}$/.test(key)) throw invalid();
     const signer = key ? localBackupSigner(privateKeyToAccount(key as Hex)) : undefined;
     const networks = inputs.map(input => {
-      const item = fields(input, ['creationProfile', 'finalityPolicy', 'rpc', 'transport', 'assets', 'creationGas', 'transferGas', 'backupSponsor', ...(input && typeof input === 'object' && Object.hasOwn(input, 'paymaster') ? ['paymaster'] : [])]);
+      const item = fields(input, ['creationProfile', 'finalityPolicy', 'rpc', 'transport', 'assets', 'creationGas', 'transferGas', 'backupSponsor', 'paymaster']);
       const creationProfile = pin(item.creationProfile), profile = loadPinnedCreationProfile(creationProfile.document, creationProfile.digest);
       const deployment = profile.deployment;
       if (deployment.lifecycle_status !== 'deployed' || !environment.wallet_enabled.includes(deployment.network_id)) throw invalid();
@@ -123,7 +122,7 @@ export function configureWalletNetworks(catalog: unknown, environment: Environme
         if (signer) backup = { sponsor: policy, signer };
       }
       let paymaster: SponsorPolicy | undefined;
-      if (item.paymaster !== undefined && item.paymaster !== null) {
+      if (item.paymaster !== null) {
         const p = fields(item.paymaster, ['address','codeHash','signer','verificationGasLimit','postOpGasLimit',
           'maximumCostWei','dailyGwei','userDailyGwei','userDailyOperations']);
         requireHash(p.codeHash);

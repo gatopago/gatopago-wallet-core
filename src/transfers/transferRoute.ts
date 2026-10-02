@@ -1,7 +1,7 @@
 import type { GasSponsor } from '../sponsorship/service';
 import type { Principal } from '../auth/principal';
 import type { Environment } from '@gatopago/environment';
-import { CLIENT_RELEASE_HEADERS, type ReleasePolicy } from '@gatopago/shared/v3/client-release';
+import { CLIENT_RELEASE_HEADERS } from '@gatopago/shared/v3/client-release';
 import { loadPinnedDeploymentManifest } from '@gatopago/shared/v3/deployment';
 import type { FinalityAssessment } from '@gatopago/shared/v3/finality';
 import { parseResourceId, type ResourceId } from '@gatopago/shared/v3/primitives';
@@ -12,7 +12,7 @@ import { validateIdentityConfig, type AuthBindings } from '../auth/config';
 import { IdentityError } from '../auth/identity';
 import { verifyAppSession } from '../auth/session';
 import type { ReceivingProfiles } from '../accounts/profile';
-import { requireCompatibleMutation } from '../clientCompatibility';
+import { requireCurrentProtocol } from '../clientProtocol';
 import { withDeadline } from '../deadline';
 import { allowMethods, isJsonRequest, v3Json } from '../http';
 import { WalletAccessError, WalletRepository } from '../accounts/repository';
@@ -36,12 +36,11 @@ export function createTransferRoute(dependencies: {
   readonly accessProfiles?: ReceivingProfiles;
   readonly relayerKey?: `0x${string}`;
   readonly profiles: readonly Profile[];
-  readonly releasePolicy: ReleasePolicy;
   readonly sponsor?: (profile: Profile, database: D1Database, identity: Principal, signal: AbortSignal) => GasSponsor | undefined;
   readonly resolvePreparation: (owned: Awaited<ReturnType<WalletRepository['ownedAccount']>>, request: TransferRequest,
     profile: Profile, signal: AbortSignal) => Promise<{ finalityEvidence: FinalityAssessment; terms: TransferPreparationTerms }>;
 }) {
-  const policy = structuredClone(dependencies.releasePolicy), resolve = dependencies.resolvePreparation;
+  const resolve = dependencies.resolvePreparation;
   const catalog = structuredClone(dependencies.profiles).map(profile => ({ profile,
     manifest: loadPinnedDeploymentManifest(profile.document, profile.digest) }));
   if (catalog.length > 32 || new Set(catalog.map(p => `${p.profile.environment}:${p.profile.digest}`)).size !== catalog.length) {
@@ -69,7 +68,7 @@ export function createTransferRoute(dependencies: {
     const methodResponse = allowMethods(request, origin, [method], allowedHeaders);
     if (methodResponse) return methodResponse;
     if (!reading) {
-      const incompatible = requireCompatibleMutation(request, config, 'account', policy);
+      const incompatible = requireCurrentProtocol(request, config, 'account', catalog.map(p => p.manifest.manifest_id));
       if (incompatible) return incompatible;
       if (!isJsonRequest(request)) {
         return respond(400, { error_code: 'INVALID_TRANSFER_REQUEST' });

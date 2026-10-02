@@ -12,7 +12,7 @@ export const unavailableAccessProfiles: ReceivingProfiles = async () => { throw 
  * credential version and the shorter evidence expiry on their reads/writes. */
 export async function verifyAppSession(request: Request, env: Pick<AuthBindings, 'WALLET_DB' | 'FIREBASE_PROJECT_ID' | 'GATOPAGO_ENVIRONMENT'>,
   scope: WebAuthnScope, profiles: ReceivingProfiles = unavailableAccessProfiles) {
-  if (env.GATOPAGO_ENVIRONMENT !== 'staging' && env.GATOPAGO_ENVIRONMENT !== 'production') throw new IdentityError('IDENTITY_UNAVAILABLE');
+  if (env.GATOPAGO_ENVIRONMENT !== 'production') throw new IdentityError('IDENTITY_UNAVAILABLE');
   const identity = await verifyConsumerIdentity(request, env.FIREBASE_PROJECT_ID, env.GATOPAGO_ENVIRONMENT);
   await new WalletRepository(env.WALLET_DB, identity).getSession();
   const access = await withDeadline(request.signal, 15_000, signal =>

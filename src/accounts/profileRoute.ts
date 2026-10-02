@@ -9,7 +9,7 @@ import { verifyAppSession } from '../auth/session';
 import { RegistrationError } from '../auth/profile';
 import { consumeLimit, privateLimitKey } from '../auth/limits';
 import { allowMethods, isJsonRequest, v3Json } from '../http';
-import { requireCompatibleMutation } from '../clientCompatibility';
+import { requireCurrentProtocol } from '../clientProtocol';
 import { WalletAccessError } from './repository';
 import { ProfileError, ProfileRepository, resolveRecipient, type ReceivingProfiles } from './profile';
 
@@ -38,7 +38,7 @@ export async function profileRoute(request: Request, env: Bindings, manifest: En
     return respond(400, { error_code: 'INVALID_REQUEST' });
   }
   if (request.method === 'POST') {
-    const incompatible = requireCompatibleMutation(request, config, 'identity'); if (incompatible) return incompatible;
+    const incompatible = requireCurrentProtocol(request, config, 'identity'); if (incompatible) return incompatible;
   }
   const signal = AbortSignal.any([request.signal, AbortSignal.timeout(40_000)]), scope = { rpId: config.webauthn_rp_id, origin };
   async function lookupQuota() {

@@ -15,6 +15,7 @@
 | `assets` | Mapa de CAIP-19 a `{symbol, decimals}`, entre 1 y 32 activos de esa red; incluye exactamente un activo nativo |
 | `creationGas`, `transferGas` | `verificationGasLimit`, `callGasLimit`, `preVerificationGas`, `maxFeePerGas`, `maxPriorityFeePerGas`, como strings decimales |
 | `backupSponsor` | `null`, o `{operator, maxGas, maxFeePerGas, maxPriorityFeePerGas, maxExecutionFee}`, con importes como strings decimales |
+| `paymaster` | `null`, o la política de patrocinio descrita abajo; el campo es obligatorio |
 
 `WALLET_RPC_ENDPOINTS` es un binding secreto JSON que asocia esos nombres a URLs HTTPS. Puede incluir las credenciales del proveedor; nunca pertenece al catálogo ni a la respuesta de compatibilidad. `WALLET_BACKUP_SIGNER_KEY` es opcional: sólo firma el envío de cambios de seguridad previamente autorizados por el usuario y debe corresponder al `operator` revisado. Sin esa clave, el primer respaldo no se ofrece como capacidad de envío; creación y transferencias pueden operar.
 
@@ -36,7 +37,7 @@ Las pruebas de composición usan D1 real de workerd, firmas efímeras y respuest
 
 ## Arbitrum Sepolia desplegado
 
-`shared/v3/arbitrum-sepolia-creation.json` se deriva de la evidencia y los artefactos exactos de `contracts/deployments/421614/account-v3/`. `node scripts/v3-deployment-profile.mjs` verifica que no diverja; `--write` lo regenera. El campo `build_info_sha256` identifica los bytes del JSON de salida de Foundry conservado en `build-artifacts.tar.gz`; `source_tree_sha256` identifica el mapa ordenado de fuentes y sus hashes de los metadatos del compilador. La base Git sin los archivos archivados no reproduce el despliegue.
+El perfil de Arbitrum Sepolia llega en el snapshot `@gatopago/shared/v3/wallet-release`; los artefactos contractuales de prueba están en `@gatopago/contract-artifacts`. `node scripts/check-vendor.mjs` verifica los SHA-256 de los paquetes conservados en `vendor/`. Este repositorio consume esos snapshots y no regenera perfiles ni compila contratos. El campo `build_info_sha256` identifica el JSON de salida de Foundry original; `source_tree_sha256` identifica el mapa ordenado de fuentes y sus hashes de los metadatos del compilador.
 
 El mapa privado de endpoints debe proporcionar:
 
@@ -52,7 +53,7 @@ La política usa el tag `finalized` de Arbitrum, con vigencia del 26/09 al 25/12
 Inspección real, explícita y sólo de lectura, mediante los adaptadores del Worker:
 
 ```sh
-V3_LIVE_RPC=1 pnpm --filter gatopago-wallet-core exec vitest run test/live-deployment.test.ts
+V3_LIVE_RPC=1 pnpm exec vitest run --config vitest.config.ts test/live-deployment.test.ts
 ```
 
 Esta prueba comprueba la composición contractual en ambos RPC al mismo checkpoint finalizado. No crea cuentas ni envía UserOperations y no sustituye el smoke con passkey y el transporte seleccionado.
@@ -61,7 +62,7 @@ Esta prueba comprueba la composición contractual en ambos RPC al mismo checkpoi
 
 `src/sponsorship/service.ts` conecta `GatoPagoPaymaster` a creación y transferencias.
 El transporte puede ser el relayer propio o un endpoint ERC-4337; no se usa la API
-de patrocinio ni el SDK de Pimlico. `shared/v3/paymaster.ts` define el formato y el
+de patrocinio ni el SDK de Pimlico. `@gatopago/shared/v3/paymaster` define el formato y el
 digest exacto que verifica el contrato. No cambia Account V3 ni su autoridad.
 
 El catálogo admite `paymaster: null` (paga la cuenta) o esta política pública:
@@ -146,36 +147,3 @@ Si la EOA no tiene ETH, el endpoint falla permanentemente o las comisiones fijas
 quedan bajo el mínimo de la red, el reenvío no garantiza inclusión: el Cron informa
 atención pendiente y se necesita intervención operativa. No se declara resuelta
 una reserva económica sólo porque haya avanzado el nonce externo.
-
-## Validación local de las correcciones P1/P2 — 30/09/2026
-
-- La identidad privada de Flow evalúa `catalog(config)`; una prueba cubre la
-  renovación de evidencia vencida y el rechazo posterior de una llave retirada.
-- La recuperación de nonces cubre caducidad, bytes idénticos, ausencia de jobs,
-  concurrencia, nonces consumidos, discrepancia entre RPC y límite de 20 envelopes.
-- El perfil contractual admite LF/CRLF sin relajar hashes ni cambios de contenido.
-- El onboarding explica una passkey autorizada y respaldo opcional, en ambos idiomas.
-
-Ejecutados localmente: 762 pruebas unitarias de Wallet Core (una optativa omitida),
-1.308 pruebas Workers de Wallet Core, 891 de Web y ocho de autenticación Workers
-de Flow. Tipos, lint, Knip/ciclos, protocolo V3, seis pruebas de scripts de staging/
-perfil y empaquetado Wrangler `--dry-run` pasaron. Los imports del candidato
-mantienen las fronteras Wallet/Flow; también pasaron ocho pruebas de ese guard.
-
-El guard global `check-backend-boundaries.mjs` inicialmente se detuvo por las
-carpetas locales antiguas `server/` y `payments-worker/`, sin archivos versionados.
-El 30/09 se retiraron esas carpetas y `client/` del repo, de forma recuperable,
-a `C:\Users\danie\AppData\Local\GatoPago\retired-local-2026-09-30`. Se preservaron
-caches y configuración; las tres variables locales conservan sus hashes SHA-256.
-`pnpm check:backend-boundaries` pasó después: ocho pruebas, 143 archivos Wallet
-Core y 57 Flow, más el guard global, sin debilitarlo. No se ejecutó ni se declara
-aprobado `verify:ci` completo.
-Esto no acredita despliegue, pagos públicos reales ni aceptación visual/humana.
-No hubo cambios de Solidity, migraciones remotas ni secretos.
-
-Una comprobación onchain independiente de esas correcciones,
-`V3_LIVE_RPC=1 pnpm exec vitest run --config vitest.config.ts test/live-deployment.test.ts`
-desde Wallet Core, pasó el 30/09 (una prueba). Offchain Labs y Tenderly verificaron
-la composición de Account V3 de Arbitrum Sepolia en un checkpoint finalizado.
-Es confirmación de un despliegue existente, no un despliegue realizado en esta
-sesión ni evidencia de un recorrido completo de creación/envío desde la app.

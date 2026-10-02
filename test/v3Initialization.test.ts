@@ -54,7 +54,7 @@ describe('V3 explicit initialization consent', () => {
 		const f = initializationFixture(), second = initializationFixture(), assertion = f.assertion();
 		const input = { ...f.input, ...(kind === 'salt' ? { userSaltCommitment: fixtureHash('e') } : kind === 'time'
 			? { validAfter: f.input.validAfter + 1, validUntil: f.input.validUntil + 1 } : kind === 'key'
-				? { publicKey: second.input.publicKey } : { scope: { ...f.input.scope, origin: 'https://app.staging.gatopago.com' } }) };
+				? { publicKey: second.input.publicKey } : { scope: { ...f.input.scope, origin: 'https://other.gatopago.com' } }) };
 		expect(() => authorizeInitialization(input, assertion, f.input.validAfter + 1)).toThrow();
 	});
 	it.each(['factory', 'entrypoint', 'verifier_hash', 'network'])('validly repinned %s still needs fresh user consent', (kind) => {

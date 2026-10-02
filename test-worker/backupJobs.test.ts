@@ -69,7 +69,8 @@ describe('backup durable runner', { timeout: 25_000 }, () => {
  });
  it('scope applies to discovery, claim, finish and fail', async () => {
   const f = await setup(), m = (await f.jobs.reserve(f.id))!;
-  const other = new BackupJobRepository(env.WALLET_DB, { ...f.processor.configuration, environment: 'production' as const });
+  expect(() => new BackupJobRepository(env.WALLET_DB, { ...f.processor.configuration, environment: 'unsupported' as never })).toThrow();
+  const other = new BackupJobRepository(env.WALLET_DB, { ...f.processor.configuration, profiles: [] });
   expect(await other.due()).toEqual([]); expect(await other.claim(m)).toBe(false); expect(await f.jobs.claim(m)).toBe(true);
   expect(await other.finish(m, { state: 'observed', reason: 'proposal_finalized' })).toBe(false);
   expect(await other.fail(m, 'running')).toBe(false);

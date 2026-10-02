@@ -39,7 +39,7 @@ export class TransferJobRepository {
   private readonly environment: Environment['environment'];
   private readonly pins: readonly string[];
   constructor(private readonly database: D1Database, configuration: TransferJobScope) {
-    if (!['staging', 'production'].includes(configuration.environment) || configuration.profiles.length > 32) {
+    if (configuration.environment !== 'production' || configuration.profiles.length > 32) {
       throw new Error('TRANSFER_JOB_CONFIGURATION');
     }
     const pins = configuration.profiles.map(pin => { loadPinnedDeploymentManifest(pin.document, pin.digest); return pin.digest; });

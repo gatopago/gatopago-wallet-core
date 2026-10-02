@@ -160,7 +160,7 @@ describe('Worker handleOps transport', () => {
   });
   it('recovers through the composed Cron even when no domain job remains to retry', async () => {
     const settings = runtimeFixture();
-    const catalog = { ...settings.catalog, staging: [{ ...settings.network, transport: {
+    const catalog = { ...settings.catalog, production: [{ ...settings.network, transport: {
       kind: 'self', endpoint: 'observer_a', maxGas: '2000000', maxFeePerGas: '100000000', maxPriorityFeePerGas: '0',
     } }] };
     const bindings = { ...env, ...settings.bindings, PRIVATE_KEY: key };

@@ -150,10 +150,10 @@ describe('onchain application-access reconciliation', { timeout: 20_000 }, () =>
   it('enforces onchain removal and upstream outages at the private Flow session boundary', async () => {
     const f = await setup(); await f.sync();
     const signer = await testIdentitySigner(); await seedIdentityKeys(signer.keys, now());
-    const config = parseEnvironment({ ...manifests.staging, status: 'provisioned', firebase_project_id: 'v3-runtime-test' });
+    const config = parseEnvironment({ ...manifests.production, status: 'provisioned', firebase_project_id: 'v3-runtime-test' });
     const request = async () => new Request('https://wallet-identity.internal/session', { method: 'POST', headers: {
       Authorization: `Bearer ${await signer.token({ sub: f.session.user_id, credential_ref: f.credentialRef })}`,
-      'X-GatoPago-Environment': 'staging' } });
+      'X-GatoPago-Environment': 'production' } });
     const first = await identityService(await request(), env, () => config, f.profiles);
     expect(first.status).toBe(200);
     expect(await first.json()).toMatchObject({ expires_at: now() + 30 });
@@ -168,7 +168,7 @@ describe('onchain application-access reconciliation', { timeout: 20_000 }, () =>
   it('composes the default Flow identity resolver with evaluated catalog data after access evidence expires', async () => {
     const f = await setup(); await f.sync(); f.advance();
     const signer = await testIdentitySigner(); await seedIdentityKeys(signer.keys, now());
-    const config = parseEnvironment({ ...manifests.staging, firebase_project_id: 'v3-runtime-test' });
+    const config = parseEnvironment({ ...manifests.production, firebase_project_id: 'v3-runtime-test' });
     const bindings = { ...env, PRIVATE_KEY: `0x${'12'.repeat(32)}`,
       WALLET_RPC_ENDPOINTS: JSON.stringify({ arbitrum_sepolia_offchain: 'https://observer-a.invalid/',
         arbitrum_sepolia_tenderly: 'https://observer-b.invalid/' }) };
@@ -180,7 +180,7 @@ describe('onchain application-access reconciliation', { timeout: 20_000 }, () =>
     });
     const request = async () => new Request('https://wallet-identity.internal/session', { method: 'POST', headers: {
       Authorization: `Bearer ${await signer.token({ sub: f.session.user_id, credential_ref: f.credentialRef })}`,
-      'X-GatoPago-Environment': 'staging' } });
+      'X-GatoPago-Environment': 'production' } });
     const first = await identityService(await request(), bindings, () => config);
     expect(first.status).toBe(200); expect(composed).toHaveBeenCalledOnce();
     expect(await first.json()).toMatchObject({ user_id: f.session.user_id, expires_at: now() + 30 });

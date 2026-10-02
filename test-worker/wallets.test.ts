@@ -17,7 +17,7 @@ import { inspectOwnedWalletAccount } from '../src/accounts/inspection';
 import { finalizedSecurityScenario } from '@gatopago/test-fixtures/v3-security-inspection';
 import { clearIdentityKeys, projectId, testIdentitySigner, unixNow } from './identity.fixture';
 
-const config = parseEnvironment({ ...manifests.staging, status: 'provisioned', firebase_project_id: projectId });
+const config = parseEnvironment({ ...manifests.production, status: 'provisioned', firebase_project_id: projectId });
 let signer: Awaited<ReturnType<typeof testIdentitySigner>>;
 const now = unixNow();
 type Session = { user_id: string };
@@ -25,15 +25,15 @@ type Session = { user_id: string };
 async function input(path = '/session', method = 'GET', subject = 'test-user-a', body: unknown = {}) {
 	return new Request(`${config.api_origin}/app/v1${path}`, { method, headers: {
 		Origin: config.web_origin, Authorization: `Bearer ${await signer.token({ sub: subject, auth_time: now - 100 })}`,
-		'Content-Type': 'application/json', ...clientMutationHeaders('staging'),
+		'Content-Type': 'application/json', ...clientMutationHeaders('production'),
 	}, ...(method === 'POST' ? { body: JSON.stringify(body) } : {}) });
 }
 const run = (request: Request) => walletReadRoute(request, env, config, async () => []);
 async function session(subject = 'test-user-a') {
-	return seedUser(env.WALLET_DB, await verifyConsumerIdentity(await input('/session', 'GET', subject), projectId, 'staging'));
+	return seedUser(env.WALLET_DB, await verifyConsumerIdentity(await input('/session', 'GET', subject), projectId, 'production'));
 }
 async function repository(subject = 'test-user-a') {
-	return new WalletRepository(env.WALLET_DB, await verifyConsumerIdentity(await input('/wallets', 'GET', subject), projectId, 'staging'));
+	return new WalletRepository(env.WALLET_DB, await verifyConsumerIdentity(await input('/wallets', 'GET', subject), projectId, 'production'));
 }
 async function seedWallet(owner: Session) {
 	const id = createResourceId('wallet'), commitment = sha256(stringToHex(id));
@@ -65,7 +65,7 @@ async function seedAccount(owner: Session, addressOverride?: string) {
 			return Response.json({ jsonrpc: '2.0', id: body.id, result: await scenario.request(body) });
 		});
 		try {
-			await refreshUserAccess(env.WALLET_DB, owner.user_id, 'staging',
+			await refreshUserAccess(env.WALLET_DB, owner.user_id, 'production',
 				{ rpId: config.webauthn_rp_id, origin: config.web_origin }, async () => [{ document: scenario.input.document,
 					digest: scenario.input.expectedDigest, verifier, rpcUrls: scenario.input.rpcUrls,
 					finalityPolicy: scenario.pin, finalityEvidence: scenario.source }], new AbortController().signal);
@@ -108,10 +108,10 @@ describe('V3 Consumer session and ownership with real D1', () => {
 	it('keeps ownership independent of the configured token project while enforcing the app environment', async () => {
 		const admitted = await session(), nextProject = 'another-auth-project', request = await input();
 		request.headers.set('Authorization', `Bearer ${await signer.token({ aud: nextProject, iss: `https://securetoken.google.com/${nextProject}` })}`);
-		const principal = await verifyConsumerIdentity(request, nextProject, 'staging');
+		const principal = await verifyConsumerIdentity(request, nextProject, 'production');
 		expect(Object.keys(principal).sort()).toEqual(['accessVersion', 'authTime', 'credentialRef', 'environment', 'expiresAt', 'userId']);
 		expect(await new WalletRepository(env.WALLET_DB, principal).getSession()).toEqual(admitted);
-		await expect(new WalletRepository(env.WALLET_DB, { ...principal, environment: 'production' }).getSession())
+		await expect(new WalletRepository(env.WALLET_DB, { ...principal, environment: 'unsupported' as never }).getSession())
 			.rejects.toMatchObject({ code: 'SESSION_REQUIRED' });
 	});
 	it('keeps a removed credential revoked after Firebase refresh while preserving another authorized key', async () => {
@@ -141,12 +141,12 @@ describe('V3 Consumer session and ownership with real D1', () => {
 		expect(await (await run(await input('/session','GET','one'))).json()).toEqual(one);
 	});
 	it('requires exact origin, API hostname and bearer authentication', async () => {
-		for (const origin of ['https://gatopago.com', 'https://other.staging.gatopago.com', 'null', '']) {
+		for (const origin of ['https://business.gatopago.com', 'https://other.gatopago.com', 'null', '']) {
 			const request = await input(); request.headers.set('Origin', origin);
 			expect((await run(request)).status).toBe(403);
 		}
 		const request = await input();
-		expect((await run(new Request('https://api.gatopago.com/app/v1/session', request))).status).toBe(403);
+		expect((await run(new Request('https://other.gatopago.com/app/v1/session', request))).status).toBe(403);
 		request.headers.set('Cookie','session=untrusted'); expect((await run(request)).status).toBe(401);
 	});
 	it('permits read preflight and rejects mutation methods', async () => {
@@ -217,7 +217,7 @@ describe('V3 authenticated ownership → pinned inspection integration', () => {
 		const seeded = await seedAccount(await session()), scenario = seeded.scenario;
 		const request = await input(`/wallets/${seeded.walletId}/accounts/${seeded.accountId}/context`);
 		// Prime JWT verification before checking that context resolution makes no RPC calls.
-		await verifyConsumerIdentity(request, projectId, 'staging');
+		await verifyConsumerIdentity(request, projectId, 'production');
 		const fetcher = vi.fn(); vi.stubGlobal('fetch', fetcher);
 		const profile = { document: scenario.input.document, digest: scenario.input.expectedDigest,
 			finalityPolicy: scenario.pin, finalityEvidence: scenario.source, assetIds: [], assetDisplay: {},

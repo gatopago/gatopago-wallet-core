@@ -11,14 +11,14 @@ import { testIdentitySigner, clearIdentityKeys, seedIdentityKeys } from './ident
 import { testPrincipal } from './principal.fixture';
 import { seedUser } from './user.fixture';
 
-const config = parseEnvironment({ ...manifests.staging, status: 'provisioned', firebase_project_id: 'v3-runtime-test', wallet_enabled: ['eip155:84532'] });
+const config = parseEnvironment({ ...manifests.production, status: 'provisioned', firebase_project_id: 'v3-runtime-test', wallet_enabled: ['eip155:84532'] });
 const principal = () => testPrincipal('profile-route');
 let signer: Awaited<ReturnType<typeof testIdentitySigner>>;
 const profiles = vi.fn(async () => { throw new Error('Unexpected chain read'); });
 async function request(path = '/profile', method = 'GET', body?: object, extra: Record<string, string> = {}) {
   return new Request(`${config.api_origin}/app/v1${path}`, { method, ...(body ? { body: JSON.stringify(body) } : {}), headers: {
     Origin: config.web_origin, ...(path.startsWith('/profile') ? { Authorization: `Bearer ${await signer.token({ sub: principal().userId })}` } : {}),
-    'CF-Connecting-IP': '192.0.2.1', ...(method === 'POST' ? { 'Content-Type': 'application/json', ...clientMutationHeaders('staging') } : {}), ...extra } });
+    'CF-Connecting-IP': '192.0.2.1', ...(method === 'POST' ? { 'Content-Type': 'application/json', ...clientMutationHeaders('production') } : {}), ...extra } });
 }
 const run = (request: Request, bindings = env) => profileRoute(request, bindings, config, profiles);
 beforeAll(async () => { await applyD1Migrations(env.WALLET_DB, env.V3_TEST_MIGRATIONS); signer = await testIdentitySigner(); });
@@ -44,7 +44,7 @@ describe('Profile HTTP authorization and public lookup limits', () => {
   it('rejects foreign origins, obsolete clients and unknown fields before mutation', async () => {
     expect((await run(await request('/profile', 'POST', { display_name: 'Daniel' }, { Origin: 'https://evil.test' }))).status).toBe(403);
     const old = await request('/profile', 'POST', { display_name: 'Daniel' });
-    for (const name of Object.keys(clientMutationHeaders('staging'))) old.headers.delete(name);
+    for (const name of Object.keys(clientMutationHeaders('production'))) old.headers.delete(name);
     expect((await run(old)).status).toBe(409);
     expect((await run(await request('/profile', 'POST', { display_name: 'Daniel', receiving_wallet_id: 'foreign' }))).status).toBe(400);
     expect(profiles).not.toHaveBeenCalled();

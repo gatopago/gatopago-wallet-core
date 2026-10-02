@@ -15,7 +15,7 @@ import type { ReceivingProfiles } from '../accounts/profile';
 import { createSessionToken } from './customToken';
 import { IdentityError } from './identity';
 import { EnrollmentError } from '../enrollment/verification';
-import { requireCompatibleMutation } from '../clientCompatibility';
+import { requireCurrentProtocol } from '../clientProtocol';
 import { allowMethods, isJsonRequest, v3Json } from '../http';
 
 const paths = ['/app/v1/auth/register/options', '/app/v1/auth/register/complete',
@@ -41,7 +41,7 @@ export async function authRoute(request: Request, env: AuthBindings, manifest: E
   if (!isAuthPath(url.pathname) || url.search) return respond(404, { error_code: 'NOT_FOUND' });
   const methods = allowMethods(request, origin, ['POST'], allowedHeaders);
   if (methods) return methods;
-  const incompatible = requireCompatibleMutation(request, config, 'identity');
+  const incompatible = requireCurrentProtocol(request, config, 'identity');
   if (incompatible) return incompatible;
   if (!isJsonRequest(request) || request.headers.has('Authorization') || request.headers.has('Cookie')) {
     return respond(400, { error_code: 'INVALID_REQUEST' });

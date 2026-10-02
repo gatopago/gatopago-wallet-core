@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createInspectionClient, inspectWalletCreationProfile, inspectWalletDeployment } from '../src/chainInspection';
+import { createInspectionClient, inspectWalletCreationProfile } from '../src/chainInspection';
+import { inspectAccountDeployment, type AccountInspectionInput } from '@gatopago/shared/v3/account-inspection';
 import { inspectionScenario } from '@gatopago/test-fixtures/v3-inspection';
 import { creationInspectionScenario } from '@gatopago/test-fixtures/v3-creation-inspection';
 import { initializationFixture } from '@gatopago/test-fixtures/v3-initialization';
@@ -10,6 +11,10 @@ import { getUserOperationHash } from 'viem/account-abstraction';
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 const endpoint = 'https://rpc.example.test/private-fixture-key';
 const freshSignal = () => new AbortController().signal;
+
+function inspectWalletDeployment(input: AccountInspectionInput, rpcUrl: string, signal: AbortSignal) {
+	return inspectAccountDeployment(createInspectionClient(rpcUrl, signal), input);
+}
 
 describe('V3 original creation composition in workerd', () => {
 	it('verifies the two P-256 proofs and packs the first UserOperation inside workerd without I/O', () => {

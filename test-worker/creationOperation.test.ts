@@ -94,7 +94,7 @@ describe('durable first UserOperation with distinct consent and transactional ou
 	it('initial-consent, wrong-key, wrong-origin and no-user-verification proofs cannot authorize the operation', async () => {
 		const a = await candidate();
 		for (const proof of [a.proof, initializationFixture().assertion(a.operation.operation_digest),
-			f.assertion(a.operation.operation_digest, { origin: 'https://gatopago.com' }), f.assertion(a.operation.operation_digest, { flags: 1 })]) {
+			f.assertion(a.operation.operation_digest, { origin: 'https://other.gatopago.com' }), f.assertion(a.operation.operation_digest, { flags: 1 })]) {
 			await expect(repository().authorize(a.id, proof)).rejects.toThrow();
 		}
 		expect((await operation(a.id))?.authorized_at).toBeNull(); expect(await outbox(a.id)).toBeNull();
@@ -122,7 +122,7 @@ describe('durable first UserOperation with distinct consent and transactional ou
 	it('hides and protects another identity\'s candidates and proof bytes', async () => {
 		const a = await candidate(), other = identity('creation-b');
 		await seedUser(env.WALLET_DB, other);
-		for (const r of [repository(other), repository({ ...other, environment: 'production' as const })]) {
+		for (const r of [repository(other), repository({ ...other, environment: 'unsupported' as never })]) {
 			await expect(r.read(a.id)).rejects.toThrow();
 			await expect(r.prepare(a.id, gas())).rejects.toThrow();
 			await expect(r.authorize(a.id, a.operationProof)).rejects.toThrow();

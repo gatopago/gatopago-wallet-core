@@ -158,7 +158,8 @@ describe('durable creation jobs: queue + scheduler + economic lifecycle', () => 
 	});
 	it('project/profile admission scopes scheduler and consumer, independently of the message', async () => {
 		const f = await creationJobsScenario(), message: CreationWake = { kind: 'account_creation', schema_version: 1, initialization_id: f.id, token: createResourceId('operation') };
-		for (const config of [{ ...f.configuration, environment: 'production' as const }, { ...f.configuration, profiles: [] }]) {
+		expect(() => new CreationJobRepository(env.WALLET_DB, { ...f.configuration, environment: 'unsupported' as never })).toThrow();
+		for (const config of [{ ...f.configuration, profiles: [] }]) {
 			const repo = new CreationJobRepository(env.WALLET_DB, config);
 			expect(await repo.due()).toEqual([]); expect(await repo.reserve(f.id)).toBeNull(); expect(await repo.claim(message)).toBe(false);
 		}
@@ -178,7 +179,7 @@ describe('durable creation jobs: queue + scheduler + economic lifecycle', () => 
 		await closed.wake(f.bindings); await closed.queue(batch(f), f.bindings);
 		expect(f.fetch).not.toHaveBeenCalled(); expect(f.send).not.toHaveBeenCalled();
 		f.fetch.mockRestore();
-		const response = await exports.default.fetch('https://api.staging.gatopago.com/app/v1/creation-jobs');
+		const response = await exports.default.fetch('https://api.gatopago.com/app/v1/creation-jobs');
 		expect(response.status).toBe(404);
 	});
 	it('configuration is detached; duplicate provider identities are rejected before RPC', async () => {

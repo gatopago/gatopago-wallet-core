@@ -5,7 +5,7 @@ import manifests from '@gatopago/environment/environments.json';
 import { verifyHuman } from '../src/auth/providers';
 import { createInspectionClient } from '../src/chainInspection';
 
-const config = parseEnvironment(manifests.staging);
+const config = parseEnvironment(manifests.production);
 const signal = () => new AbortController().signal;
 afterEach(() => vi.restoreAllMocks());
 

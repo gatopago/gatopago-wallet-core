@@ -23,7 +23,8 @@
   "routes": [{ "pattern": "api.gatopago.com", "custom_domain": true }],
   "d1_databases": [{
     "binding": "WALLET_DB",
-    "database_id": "f9aa958c-2c16-4fed-b3e4-a76d9160eb33",
+    "database_name": "gatopago-wallet-core",
+    "database_id": "48996f36-0c69-4b0c-af75-b73e88b4f09b",
     "migrations_dir": "migrations"
   }],
   "queues": {

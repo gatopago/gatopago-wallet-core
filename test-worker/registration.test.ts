@@ -9,8 +9,8 @@ import { pruneAuthChallenges } from '../src/auth/retention';
 import { registrationProfile } from '../src/auth/profile';
 import { credential, generateKey } from './passkey.fixture';
 
-const scope = { rpId: 'staging.gatopago.com', origin: 'https://staging.gatopago.com' };
-const repo = () => new RegistrationRepository(env.WALLET_DB, 'staging', scope);
+const scope = { rpId: 'gatopago.com', origin: 'https://gatopago.com' };
+const repo = () => new RegistrationRepository(env.WALLET_DB, 'production', scope);
 const now = () => Math.floor(Date.now() / 1000);
 const invite = () => issueInvitation(env.WALLET_DB, 'test-operator', now() + 3600);
 async function prepare(username = 'daniel', token?: string) {
@@ -42,7 +42,7 @@ describe('invitation admission with real WebAuthn and transactional D1', () => {
     const p = await prepare(), result = await repo().complete(p.request_id, credential(p));
     expect(await counts()).toEqual([1, 1, 1]);
     expect(await env.WALLET_DB.prepare('SELECT * FROM users').first()).toMatchObject({ id: result.userId,
-      environment: 'staging', username: 'daniel', username_published_at: null, receiving_wallet_id: null });
+      environment: 'production', username: 'daniel', username_published_at: null, receiving_wallet_id: null });
     expect(await env.WALLET_DB.prepare('SELECT * FROM webauthn_credentials').first()).toMatchObject({
       user_id: result.userId, login_enabled: 1, access_version: 1 });
     await expect(repo().complete(p.request_id, credential(p))).rejects.toThrow('CHALLENGE_UNAVAILABLE');

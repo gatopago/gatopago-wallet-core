@@ -12,14 +12,14 @@ import { credential, generateKey, authentication } from './passkey.fixture';
 import type { RegistrationRepository } from '../src/auth/registration';
 import type { LoginRepository } from '../src/auth/login';
 
-const config = parseEnvironment({ ...manifests.staging, status: 'provisioned', firebase_project_id: 'v3-runtime-test' });
+const config = parseEnvironment({ ...manifests.production, status: 'provisioned', firebase_project_id: 'v3-runtime-test' });
 const root = `${config.api_origin}/app/v1/auth`;
 let signer: string, publicKey: CryptoKey;
 const bindings = () => ({ ...env, FIREBASE_CUSTOM_TOKEN_SIGNER_JSON: signer });
 function request(path: string, body: unknown = {}, headers: Record<string, string> = {}) {
   return new Request(`${root}/${path}`, { method: 'POST', body: JSON.stringify(body), headers: {
     Origin: config.web_origin, 'Content-Type': 'application/json', 'CF-Connecting-IP': '192.0.2.1',
-    ...clientMutationHeaders('staging'), ...headers } });
+    ...clientMutationHeaders('production'), ...headers } });
 }
 const run = (req: Request) => authRoute(req, bindings(), config);
 async function signup() {
@@ -94,7 +94,7 @@ describe('public passkey authentication boundary', () => {
   });
   it('requires a compatible client before creating challenges', async () => {
     const req = request('login/options');
-    for (const header of Object.keys(clientMutationHeaders('staging'))) req.headers.delete(header);
+    for (const header of Object.keys(clientMutationHeaders('production'))) req.headers.delete(header);
     expect((await run(req)).status).toBe(409);
     expect(await env.WALLET_DB.prepare('SELECT count(*) AS n FROM auth_challenges').first('n')).toBe(0);
   });
@@ -122,10 +122,10 @@ describe('public passkey authentication boundary', () => {
     expect((await authRoute(request('login/options', {}, { 'CF-Connecting-IP': '192.0.2.2' }), limited, config)).status).toBe(429);
     expect(fetch).not.toHaveBeenCalled();
   });
-  it('hashes private quota keys by environment and prunes expired limits', async () => {
+  it('hashes private quota keys by scope and prunes expired limits', async () => {
     const key = await privateLimitKey(env, 'ip', '192.0.2.1');
     expect(key).toMatch(/^[0-9a-f]{64}$/);
-    expect(key).not.toBe(await privateLimitKey({ ...env, GATOPAGO_ENVIRONMENT: 'production' }, 'ip', '192.0.2.1'));
+    expect(key).not.toBe(await privateLimitKey(env, 'global', '192.0.2.1'));
     await consumeLimit(env.WALLET_DB, 'ip', key, 1000, 10); await consumeLimit(env.WALLET_DB, 'global', 'all', 4000, 10);
     await pruneLimits(env.WALLET_DB, 4600);
     expect((await env.WALLET_DB.prepare('SELECT key_hash FROM auth_limits').all()).results).toEqual([{ key_hash: 'all' }]);

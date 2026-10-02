@@ -1,0 +1,7 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": ["test-worker/env.d.ts"],
+  "ignoreBinaries": ["anvil"],
+  "ignoreDependencies": ["cloudflare"],
+  "ignoreExportsUsedInFile": { "interface": true, "type": true }
+}

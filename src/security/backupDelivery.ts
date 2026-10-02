@@ -54,7 +54,7 @@ export class BackupDeliveryRepository {
  private readonly configuration: CreationDeliveryConfiguration;
  constructor(database: D1Database, configuration: CreationDeliveryConfiguration) {
   assertWebAuthnScope(configuration.scope);
-  if (!['staging', 'production'].includes(configuration.environment) || configuration.profiles.length > 32) throw invalid();
+  if (configuration.environment !== 'production' || configuration.profiles.length > 32) throw invalid();
   const profiles = configuration.profiles.map((pin) => {
    loadPinnedCreationProfile(pin.document, pin.digest); return Object.freeze({ document: pin.document, digest: pin.digest });
   });

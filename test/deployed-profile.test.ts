@@ -19,7 +19,7 @@ describe('deployed Arbitrum Sepolia profile', () => {
   });
   it('composes the real release when the environment and provider bindings are provisioned', () => {
     const f = runtimeFixture(ARBITRUM_SEPOLIA_CREATION);
-    const catalog = { schema_version: 1, staging: [arbitrumSepolia], production: [] };
+    const catalog = { schema_version: 1, production: [arbitrumSepolia] };
     const bindings = { WALLET_BACKUP_SIGNER_KEY: '', PRIVATE_KEY: `0x${'11'.repeat(32)}`, WALLET_RPC_ENDPOINTS: JSON.stringify({
       arbitrum_sepolia_offchain: 'https://observer-a.invalid/', arbitrum_sepolia_tenderly: 'https://observer-b.invalid/',
       arbitrum_sepolia_bundler: 'https://bundler.invalid/',

@@ -34,7 +34,7 @@ describe('V3 WebAuthn encoding against the actual verifier profile', () => {
   it.each([
     { rpId: 'gatopago.com', origin: 'https://gatopago.com' },
     { rpId: 'gatopago.com', origin: 'https://app.gatopago.com' },
-    { rpId: 'staging.gatopago.com', origin: 'https://staging.gatopago.com' }, scope,
+    { rpId: 'wallet.example.org', origin: 'https://wallet.example.org' }, scope,
   ])('accepts a canonical scope (%j); allowlisting remains the caller responsibility', (value) => {
     expect(() => assertWebAuthnScope(value)).not.toThrow();
   });

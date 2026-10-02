@@ -9,14 +9,14 @@ import { testIdentitySigner, clearIdentityKeys, seedIdentityKeys } from './ident
 import { testPrincipal } from './principal.fixture';
 import { seedUser } from './user.fixture';
 
-const config = parseEnvironment({ ...manifests.staging, status: 'provisioned', firebase_project_id: 'v3-runtime-test' });
+const config = parseEnvironment({ ...manifests.production, status: 'provisioned', firebase_project_id: 'v3-runtime-test' });
 const principal = testPrincipal('flow-identity');
 let signer: Awaited<ReturnType<typeof testIdentitySigner>>;
 const run = (request: Request) => identityService(request, env, () => config);
 async function request(claims: Parameters<typeof signer.token>[0] = {}, headers: Record<string, string> = {}) {
   return new Request('https://wallet-identity.internal/session', { method: 'POST', headers: {
     Authorization: `Bearer ${await signer.token({ sub: principal.userId, ...claims })}`,
-    'X-GatoPago-Environment': 'staging', ...headers } });
+    'X-GatoPago-Environment': 'production', ...headers } });
 }
 beforeAll(async () => { await applyD1Migrations(env.WALLET_DB, env.V3_TEST_MIGRATIONS); signer = await testIdentitySigner(); });
 beforeEach(async () => {
@@ -32,7 +32,7 @@ describe('private Wallet Core identity service', () => {
     const response = await run(await request());
     expect(response.status).toBe(200);
     expect(response.headers.get('Cache-Control')).toBe('no-store');
-    expect(await response.json()).toEqual({ user_id: principal.userId, environment: 'staging', expires_at: Math.floor(Date.now() / 1000) + 30 });
+    expect(await response.json()).toEqual({ user_id: principal.userId, environment: 'production', expires_at: Math.floor(Date.now() / 1000) + 30 });
   });
   it.each([
     'UPDATE webauthn_credentials SET login_enabled = 0',
@@ -54,7 +54,7 @@ describe('private Wallet Core identity service', () => {
   it('rejects cookies, browser origins, wrong environment and wrong audience', async () => {
     expect((await run(await request({}, { Cookie: 'session=value' }))).status).toBe(401);
     expect((await run(await request({}, { Origin: config.web_origin }))).status).toBe(401);
-    expect((await run(await request({}, { 'X-GatoPago-Environment': 'production' }))).status).toBe(503);
+    expect((await run(await request({}, { 'X-GatoPago-Environment': 'unsupported' }))).status).toBe(503);
     expect((await run(await request({ aud: 'other-project' }))).status).toBe(401);
   });
   it('does not expose introspection on the public worker or provision an unconfigured service', async () => {

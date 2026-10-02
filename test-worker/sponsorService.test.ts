@@ -15,7 +15,7 @@ vi.mock('viem', async (original) => ({ ...await original<typeof import('viem')>(
 }) }));
 beforeAll(async () => { await applyD1Migrations(env.WALLET_DB, env.V3_TEST_MIGRATIONS); });
 beforeEach(async () => { chain.cap = 10000n; chain.deposit = 10000n; chain.code = '0x6000'; await env.WALLET_DB.exec('DELETE FROM sponsorship_reservations; DELETE FROM users;');
-  await env.WALLET_DB.prepare("INSERT INTO users(id,environment,created_at) VALUES (?,'staging',?)")
+  await env.WALLET_DB.prepare("INSERT INTO users(id,environment,created_at) VALUES (?,'production',?)")
     .bind(testPrincipal('alice').userId, Math.floor(Date.now() / 1000)).run();
 });
 function fixture() {
@@ -24,7 +24,7 @@ function fixture() {
   chain.signer = signer.address; chain.ep = ep;
   const policy: SponsorPolicy = { address, codeHash: keccak256('0x6000'), signer: signer.address, verificationGasLimit: '100', postOpGasLimit: '0',
     maximumCostWei: '10000', dailyGwei: 10, userDailyGwei: 2, userDailyOperations: 2 };
-  const identity = testPrincipal('alice', { environment: 'staging', authTime: now, expiresAt: now + 300 });
+  const identity = testPrincipal('alice', { environment: 'production', authTime: now, expiresAt: now + 300 });
   const operation = { sender: getAddress(`0x${'ef'.repeat(20)}`), nonce: 0n, callData: '0x1234' as Hex, signature: '0x' as Hex,
     verificationGasLimit: 100n, callGasLimit: 100n, preVerificationGas: 100n, maxFeePerGas: 2n, maxPriorityFeePerGas: 0n };
   const sponsor = createGasSponsor(env.WALLET_DB, identity, policy, key, 421614n, ep, ['https://rpc-a.invalid', 'https://rpc-b.invalid'], AbortSignal.timeout(5000));

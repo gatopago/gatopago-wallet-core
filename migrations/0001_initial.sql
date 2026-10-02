@@ -12,7 +12,7 @@ CREATE TABLE auth_limits (
 
 CREATE TABLE users (
   id TEXT PRIMARY KEY CHECK (length(id) = 40 AND id GLOB 'usr_*'),
-  environment TEXT NOT NULL CHECK (environment IN ('staging','production')),
+  environment TEXT NOT NULL CHECK (environment = 'production'),
   display_name TEXT NOT NULL DEFAULT '' CHECK (length(display_name) <= 80),
   username TEXT UNIQUE CHECK (username IS NULL OR (
     length(username) BETWEEN 5 AND 30 AND substr(username,1,1) GLOB '[a-z]'

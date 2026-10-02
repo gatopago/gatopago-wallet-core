@@ -6,7 +6,7 @@ import { applyD1Migrations } from 'cloudflare:test';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import manifests from '@gatopago/environment/environments.json';
 import { parseEnvironment } from '@gatopago/environment';
-import { clientMutationHeaders, WALLET_RELEASE_POLICY } from '@gatopago/shared/v3/client-release';
+import { clientMutationHeaders } from '@gatopago/shared/v3/client-release';
 import { parseCreationPreview } from '@gatopago/shared/v3/creation-operation-wire';
 import { createResourceId } from '@gatopago/shared/v3/primitives';
 import { createCreationOperationRoute } from '../src/creation/creationOperationRoute';
@@ -15,10 +15,10 @@ import { initializationFixture } from '@gatopago/test-fixtures/v3-initialization
 import { fixtureHash } from '@gatopago/test-fixtures/v3-inspection';
 import { clearIdentityKeys, projectId, testIdentitySigner } from './identity.fixture';
 
-const creationOperationRoute = createCreationOperationRoute({ profiles: [], releasePolicy: WALLET_RELEASE_POLICY, async requireFreshDeployment() { throw new Error('Unexpected observer'); }, async quoteGas() { throw new Error('Unexpected quote'); } });
+const creationOperationRoute = createCreationOperationRoute({ profiles: [], async requireFreshDeployment() { throw new Error('Unexpected observer'); }, async quoteGas() { throw new Error('Unexpected quote'); } });
 
 const now = () => Math.floor(Date.now() / 1000);
-const config = parseEnvironment({ ...manifests.staging, status: 'provisioned', firebase_project_id: projectId, wallet_enabled: ['eip155:84532'] });
+const config = parseEnvironment({ ...manifests.production, status: 'provisioned', firebase_project_id: projectId, wallet_enabled: ['eip155:84532'] });
 const gas = (maximumGasCharge = 2_250_000_000_000_000n) => ({ verificationGasLimit: 2_000_000n, callGasLimit: 100_000n, preVerificationGas: 150_000n,
 	maxFeePerGas: 1_000_000_000n, maxPriorityFeePerGas: 0n, maximumGasCharge });
 const cap = () => ({ maximum_gas_charge: gas().maximumGasCharge.toString() });
@@ -31,12 +31,12 @@ const proof = (digest: `0x${string}`, options: Parameters<typeof f.assertion>[1]
 };
 async function request(route: string, body: unknown = null, method = 'POST', subject = 'creation-http-a', signal?: AbortSignal) {
 	return new Request(`${config.api_origin}${route}`, { method, signal, headers: { Origin: config.web_origin, 'Content-Type': 'application/json',
-		Authorization: `Bearer ${await signer.token({ sub: subject })}`, ...clientMutationHeaders('staging', method === 'GET' ? undefined : account()) },
+		Authorization: `Bearer ${await signer.token({ sub: subject })}`, ...clientMutationHeaders('production', method === 'GET' ? undefined : account()) },
 		...(method === 'POST' ? { body: JSON.stringify(body) } : {}) });
 }
 function candidate() {
 	const observe = vi.fn(async () => undefined), quote = vi.fn(async (_pin: unknown, _initial: unknown, maximum: bigint) => gas(maximum));
-	const deps = { profiles: [{ ...f.pin, environment: 'staging' as const }], releasePolicy: { ...WALLET_RELEASE_POLICY, account_profiles: [account()] },
+	const deps = { profiles: [{ ...f.pin, environment: 'production' as const }],
 		requireFreshDeployment: observe, quoteGas: quote };
 	return { run: createCreationOperationRoute(deps), observe, quote, deps };
 }
@@ -160,7 +160,7 @@ describe('first creation operation HTTP boundary (synthetic quote/observer, real
 		const p = parseCreationPreview(await (await c.run(await request(path(t.id), cap()), env, config)).json(), t.consent);
 		const other = initializationFixture().assertion(p.candidate.digest);
 		const badKey = { authenticator_data: Buffer.from(other.authenticatorData).toString('base64url'), client_data: Buffer.from(other.clientDataJSON).toString('base64url'), signature: Buffer.from(other.signatureDER).toString('base64url') };
-		for (const assertion of [proof(t.consent.preparation.approval_digest), proof(p.candidate.digest, { flags: 1 }), proof(p.candidate.digest, { origin: 'https://gatopago.com' }), badKey]) {
+		for (const assertion of [proof(t.consent.preparation.approval_digest), proof(p.candidate.digest, { flags: 1 }), proof(p.candidate.digest, { origin: 'https://other.gatopago.com' }), badKey]) {
 			expect((await c.run(await request(`${path(t.id)}/authorize`, assertion), env, config)).status).toBe(400);
 		}
 		expect((await queued()).results).toHaveLength(0);

@@ -6,7 +6,7 @@ import { validateIdentityConfig, type AuthBindings } from '../auth/config';
 import { IdentityError } from '../auth/identity';
 import { verifyAppSession } from '../auth/session';
 import type { ReceivingProfiles } from '../accounts/profile';
-import { requireCompatibleMutation } from '../clientCompatibility';
+import { requireCurrentProtocol } from '../clientProtocol';
 import { allowMethods, isJsonRequest, v3Json } from '../http';
 import { WalletAccessError } from '../accounts/repository';
 import { EnrollmentRepository } from './repository';
@@ -43,7 +43,7 @@ export async function enrollmentRoute(request: Request, env: AuthBindings, manif
 	if (methodResponse) return methodResponse;
 	// Identity-level enrollment does not smuggle in a usable contract manifest.
 	if (method === 'POST') {
-		const incompatible = requireCompatibleMutation(request, config, 'identity');
+		const incompatible = requireCurrentProtocol(request, config, 'identity');
 		if (incompatible) return incompatible;
 		if (!isJsonRequest(request)) return respond(400, { error_code: 'INVALID_ENROLLMENT' });
 	}

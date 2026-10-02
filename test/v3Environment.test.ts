@@ -1,44 +1,39 @@
 import { describe, expect, it } from "vitest";
 import environments from "@gatopago/environment/environments.json";
-import { environmentFromVariables, apiRouteOwner, assertEnvironmentIsolation, assertProvisioned, parseEnvironment } from "@gatopago/environment";
+import { environmentFromVariables, apiRouteOwner, assertProvisioned, parseEnvironment } from "@gatopago/environment";
 
 describe("V3 environments and resource routing", () => {
-	it("enables only deployed Arbitrum Sepolia in staging and keeps production disabled", () => {
-		const staging = parseEnvironment(environments.staging);
+	it("exposes only production, with Arbitrum Sepolia and live payments disabled", () => {
 		const production = parseEnvironment(environments.production);
-		expect(() => assertEnvironmentIsolation(staging, production)).not.toThrow();
-		for (const env of [staging, production]) {
-			expect(env.wallet_candidates).toHaveLength(3);
-			expect(env.blockchain_tiers).toEqual(["testnet"]);
-			expect(env.payment_live_enabled).toBe(false);
-		}
-		expect(staging.wallet_enabled).toEqual(["eip155:421614"]);
-		expect(staging.firebase_project_id).toBe("proyecto-prueba-push-firebase");
-		expect(() => assertProvisioned(staging)).not.toThrow();
-		expect(production.wallet_enabled).toEqual([]);
-		expect(production.firebase_project_id).toBeNull();
-		expect(() => assertProvisioned(production)).toThrow("not provisioned");
+		expect(Object.keys(environments)).toEqual(["production"]);
+		expect(production.wallet_candidates).toHaveLength(3);
+		expect(production.blockchain_tiers).toEqual(["testnet"]);
+		expect(production.api_modes).toEqual(["test"]);
+		expect(production.payment_live_enabled).toBe(false);
+		expect(production.wallet_enabled).toEqual(["eip155:421614"]);
+		expect(production.firebase_project_id).toBe("proyecto-prueba-push-firebase");
+		expect(() => assertProvisioned(production)).not.toThrow();
 	});
 
 	it.each([
-		{ webauthn_rp_id: "gatopago.com" },
-		{ webauthn_allowed_origins: ["https://gatopago.com"] },
+		{ environment: "unsupported" },
+		{ webauthn_rp_id: "other.test" },
+		{ webauthn_allowed_origins: ["https://other.gatopago.com"] },
 		{ webauthn_allowed_origins: ["https://*.vercel.app"] },
 		{ payment_live_enabled: true },
 		{ api_modes: ["test", "live"] },
 		{ blockchain_tiers: ["mainnet"] },
-		{ firebase_project_id: "gatopago-staging", status: "unprovisioned" },
+		{ firebase_project_id: "v3-runtime-test", status: "unprovisioned" },
 		{ wallet_enabled: ["eip155:1"] },
 		{ status: "unprovisioned", firebase_project_id: null, wallet_enabled: ["eip155:421614"] },
 		{ unexpected_secret: "must-not-be-here" },
 	])("rejects origin, mode and resource confusion %j", (override) => {
-		expect(() => parseEnvironment({ ...environments.staging, ...override })).toThrow();
+		expect(() => parseEnvironment({ ...environments.production, ...override })).toThrow();
 	});
 
-	it("rejects sharing Firebase between remote environments", () => {
-		const staging = parseEnvironment({ ...environments.staging, status: "provisioned", firebase_project_id: "gatopago-shared" });
-		const production = parseEnvironment({ ...environments.production, status: "provisioned", firebase_project_id: "gatopago-shared" });
-		expect(() => assertEnvironmentIsolation(staging, production)).toThrow("not isolated");
+	it("rejects mutation access for unprovisioned resources", () => {
+		const unavailable = parseEnvironment({ ...environments.production, status: "unprovisioned", firebase_project_id: null, wallet_enabled: [] });
+		expect(() => assertProvisioned(unavailable)).toThrow("not provisioned");
 	});
 
 	it.each(["wallets", "transfers"])("routes the collection and children of %s to Wallet Core", (resource) => {
@@ -56,7 +51,7 @@ describe("V3 environments and resource routing", () => {
 
 
 describe('Environment variables', () => {
-  const variables = { GATOPAGO_ENVIRONMENT: 'staging', GATOPAGO_WEB_ORIGIN: 'http://localhost:3000',
+  const variables = { GATOPAGO_ENVIRONMENT: 'production', GATOPAGO_WEB_ORIGIN: 'http://localhost:3000',
     GATOPAGO_API_ORIGIN: 'http://localhost:8787', GATOPAGO_BUSINESS_ORIGIN: 'http://localhost:3000',
     GATOPAGO_WALLET_NETWORKS: 'eip155:421614', FIREBASE_PROJECT_ID: 'v3-local-test' };
   it('uses configured URLs and derives the passkey RP without a domain map', () => {

@@ -5,7 +5,7 @@ TURNSTILE_SECRET_KEY=""
 AUTH_RATE_LIMIT_PEPPER=""
 
 # Private endpoint map referenced by src/runtime/catalog.ts; never supplied by HTTP/Queue.
-# Required staging keys: arbitrum_sepolia_offchain, arbitrum_sepolia_tenderly.
+# Required Arbitrum Sepolia keys: arbitrum_sepolia_offchain, arbitrum_sepolia_tenderly.
 # See RUNTIME.md for the two public RPCs; self relay needs no bundler URL.
 WALLET_RPC_ENDPOINTS="{}"
 # Optional operator key for backup gas sponsorship, never a user ADMIN key.

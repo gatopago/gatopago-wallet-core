@@ -71,7 +71,7 @@ async function firebaseKeys(kid: string, signal: AbortSignal): Promise<JSONWebKe
  * a valid offline JWT alone does not prove that Firebase has not revoked the session.
  */
 export async function verifyConsumerIdentity(request: Request, projectId: string, environment: Principal['environment']): Promise<Principal> {
-	if (environment !== 'staging' && environment !== 'production') throw new IdentityError('IDENTITY_UNAVAILABLE');
+	if (environment !== 'production') throw new IdentityError('IDENTITY_UNAVAILABLE');
 	const authorization = request.headers.get('Authorization') ?? '';
 	if (authorization.length > 8192 || !/^Bearer [A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$(?![\s\S])/.test(authorization)
 		|| request.headers.has('Cookie')) throw new IdentityError('UNAUTHENTICATED');

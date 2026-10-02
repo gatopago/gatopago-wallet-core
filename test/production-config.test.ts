@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
@@ -13,12 +13,12 @@ describe('production deployment configuration (no remote writes)', () => {
     expect(config.vars.GATOPAGO_WEB_ORIGIN).toBe('https://gatopago.com');
     expect(config.vars.GATOPAGO_API_ORIGIN).toBe('https://api.gatopago.com');
     expect(config.routes).toEqual([{ pattern: 'api.gatopago.com', custom_domain: true }]);
-    expect(JSON.stringify(config)).not.toMatch(/staging/i);
-    expect(existsSync(new URL('wrangler.staging.jsonc', root))).toBe(false);
+    expect(readdirSync(root).filter(name => /^wrangler\..*jsonc$/.test(name)).sort()).toEqual(['wrangler.jsonc', 'wrangler.remote.jsonc']);
   });
-  it('preserves the real database identity and aligns all queue names', () => {
+  it('binds the verified production database and aligns all queue names', () => {
     expect(config.d1_databases).toEqual([{ binding: 'WALLET_DB',
-      database_id: 'f9aa958c-2c16-4fed-b3e4-a76d9160eb33', migrations_dir: 'migrations' }]);
+      database_name: 'gatopago-wallet-core',
+      database_id: '48996f36-0c69-4b0c-af75-b73e88b4f09b', migrations_dir: 'migrations' }]);
     expect(config.vars.CREATION_QUEUE_NAME).toBe('gatopago-wallet-core-jobs');
     expect(config.queues.producers).toEqual([{ binding: 'CREATION_JOBS', queue: config.vars.CREATION_QUEUE_NAME }]);
     expect(config.queues.consumers).toHaveLength(1);
@@ -30,17 +30,15 @@ describe('production deployment configuration (no remote writes)', () => {
     expect(local).toContain('"GATOPAGO_ENVIRONMENT": "production"');
     expect(local).toContain('"remote": false');
     expect(local).not.toContain(config.d1_databases[0].database_id);
-    expect(local).not.toContain('staging');
     expect(readFileSync(new URL('.env.example', root), 'utf8')).toContain('GATOPAGO_ENVIRONMENT=production');
   });
   it('uses production configuration in CI, without real Firebase credentials', () => {
     const ci = readFileSync(new URL('.github/workflows/ci.yml', root), 'utf8');
     expect(ci).toContain('GATOPAGO_ENVIRONMENT: production');
     expect(ci).toContain('FIREBASE_PROJECT_ID: v3-build-test');
-    expect(ci).not.toContain('staging');
   });
-  it('rejects the removed deployment switch before invoking Wrangler', () => {
-    const result = spawnSync(process.execPath, [fileURLToPath(new URL('scripts/deploy.mjs', root)), '--dry-run', '--staging'], {
+  it.each(['--unsupported', '--maintenance'])('rejects unrecognized %s before invoking Wrangler', switchName => {
+    const result = spawnSync(process.execPath, [fileURLToPath(new URL('scripts/deploy.mjs', root)), '--dry-run', switchName], {
       cwd: root, encoding: 'utf8', timeout: 10_000,
     });
     expect(result.status).not.toBe(0);

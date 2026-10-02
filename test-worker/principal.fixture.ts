@@ -9,6 +9,6 @@ export function testUserId(label: string) {
 export const testCredentialRef = (label: string) => `op_${testUserId(label).slice(4)}`;
 export function testPrincipal(label: string, overrides: Partial<Principal> = {}): Principal {
   const now = Math.floor(Date.now() / 1000), userId = testUserId(label);
-  return { environment: 'staging', userId, credentialRef: testCredentialRef(userId), accessVersion: 1,
+  return { environment: 'production', userId, credentialRef: testCredentialRef(userId), accessVersion: 1,
     authTime: now - 30, expiresAt: now + 3600, ...overrides };
 }

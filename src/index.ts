@@ -2,7 +2,7 @@ import { isProfilePath, profileRoute } from './accounts/profileRoute';
 import { configuredEnvironment } from './auth/config';
 import { isAuthPath, authRoute } from './auth/route';
 import { CLIENT_COMPATIBILITY_PATH } from '@gatopago/shared/v3/client-release';
-import { clientCompatibilityRoute } from './clientCompatibility';
+import { clientProtocolRoute } from './clientProtocol';
 import { isWalletReadPath, walletReadRoute } from './accounts/route';
 import { enrollmentRoute, isEnrollmentPath } from './enrollment/route';
 import { isInitializationPath } from './creation/initializationRoute';
@@ -40,37 +40,39 @@ export function createWalletWorker(configuration?: unknown, environment = config
         { status: 404, headers: { 'Cache-Control': 'no-store' } });
       try {
         const config = environment(env);
+        let runtime: ReturnType<typeof createWalletRuntime> | undefined;
+        const walletRuntime = () => runtime ??= createWalletRuntime(env, config, configuration ?? catalog(config));
         // Identity and stored history remain readable if financial configuration is
         // unavailable. Resolve providers only for the authenticated chain-read path.
         if (isProfilePath(path)) return await profileRoute(request, env, config,
-          (owned, signal) => createWalletRuntime(env, config, configuration ?? catalog(config)).receivingProfiles(owned, signal));
+          (owned, signal) => walletRuntime().receivingProfiles(owned, signal));
         if (isAuthPath(path)) return await authRoute(request, env, config,
-          (owned, signal) => createWalletRuntime(env, config, configuration ?? catalog(config)).receivingProfiles(owned, signal));
+          (owned, signal) => walletRuntime().receivingProfiles(owned, signal));
         if (isEnrollmentPath(path)) return await enrollmentRoute(request, env, config,
-          (owned, signal) => createWalletRuntime(env, config, configuration ?? catalog(config)).receivingProfiles(owned, signal));
+          (owned, signal) => walletRuntime().receivingProfiles(owned, signal));
         if (isWalletReadPath(path)) return await walletReadRoute(request, env, config,
-          (owned, signal) => createWalletRuntime(env, config, configuration ?? catalog(config)).balanceProfiles(owned, signal),
-          (owned, signal) => createWalletRuntime(env, config, configuration ?? catalog(config)).receivingProfiles(owned, signal));
-        const runtime = createWalletRuntime(env, config, configuration ?? catalog(config));
-        if (path === '/app/v1/health/ready') return Response.json({ service: 'gatopago-wallet-core', configured: runtime.configured,
-          capabilities: runtime.capabilities, networks: runtime.networks },
-          { status: runtime.configured ? 200 : 503, headers: { 'Cache-Control': 'no-store' } });
-        if (isTransferCommandPath(path)) return await runtime.transfer(request, env, config);
-        if (isBackupPath(path)) return await runtime.backup(request, env, config);
+          (owned, signal) => walletRuntime().balanceProfiles(owned, signal),
+          (owned, signal) => walletRuntime().receivingProfiles(owned, signal));
+        const resolved = walletRuntime();
+        if (path === '/app/v1/health/ready') return Response.json({ service: 'gatopago-wallet-core', configured: resolved.configured,
+          capabilities: resolved.capabilities, networks: resolved.networks },
+          { status: resolved.configured ? 200 : 503, headers: { 'Cache-Control': 'no-store' } });
+        if (isTransferCommandPath(path)) return await resolved.transfer(request, env, config);
+        if (isBackupPath(path)) return await resolved.backup(request, env, config);
         if (isCreationOperationPath(path)) {
-          const response = await runtime.creationOperation(request, env, config);
+          const response = await resolved.creationOperation(request, env, config);
           if (ctx && response.ok && request.method === 'POST' && path.endsWith('/authorize')) {
             const id = parseResourceId('operation', path.split('/')[4]);
             // A best-effort wake-up is not part of financial authorization. Cron
             // recovers the durable job if this notification fails or is interrupted.
-            ctx.waitUntil(runtime.jobs.creation.wake(env, id).catch(() => {
+            ctx.waitUntil(resolved.jobs.creation.wake(env, id).catch(() => {
               console.warn({ event: 'v3_creation_wake_failed' });
             }));
           }
           return response;
         }
-        if (isInitializationPath(path)) return await runtime.initialization(request, env, config);
-        return clientCompatibilityRoute(request, config, runtime.releasePolicy);
+        if (isInitializationPath(path)) return await resolved.initialization(request, env, config);
+        return clientProtocolRoute(request, config, resolved.accountProfiles);
       }
       catch { return Response.json({ error_code: 'SERVICE_UNAVAILABLE' }, { status: 503,
         headers: { 'Cache-Control': 'no-store', 'Retry-After': '60' } }); }

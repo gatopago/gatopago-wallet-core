@@ -121,7 +121,11 @@ describe('durable first-operation dispatch leases in actual D1', () => {
 		const f = await seedCreationDelivery();
 		if (change === 'disabled') await env.WALLET_DB.prepare('UPDATE users SET disabled_at = ? WHERE id = ?').bind(deliveryNow(), f.session.user_id).run();
 		if (change === 'cutoff') await env.WALLET_DB.prepare('UPDATE users SET auth_not_before = ? WHERE id = ?').bind(f.principal.authTime + 1, f.session.user_id).run();
-		const r = change === 'environment' ? new CreationDeliveryRepository(env.WALLET_DB, { ...f.configuration, environment: 'production' as const }) : repository(f);
+		if (change === 'environment') {
+			expect(() => new CreationDeliveryRepository(env.WALLET_DB, { ...f.configuration, environment: 'unsupported' as never })).toThrow();
+			return;
+		}
+		const r = repository(f);
 		await expect(r.claim(f.id)).rejects.toMatchObject({ code: 'CREATION_GRANT_REVOKED' });
 		expect(await deliveryOutbox(f.id)).toMatchObject({ state: 'pending', attempt_count: 0, lease_token: null });
 	});
@@ -142,10 +146,11 @@ describe('durable first-operation dispatch leases in actual D1', () => {
 		await expect(repository(f).claim(f.id)).rejects.toMatchObject({ code: 'WALLET_DATA_INVALID' });
 		expect((await deliveryOutbox(f.id))?.attempt_count).toBe(0);
 	});
-	it('sweeps only this project, with bounded identifiers and no proof/JWT payload', async () => {
-		const f = await seedCreationDelivery(), other = await seedCreationDelivery({ ...deliveryIdentity('other'), environment: 'production' as const });
-		expect(await repository(f).due(1)).toEqual([f.id]);
-		expect(await repository(other).due()).toEqual([other.id]);
+	it('sweeps production grants across users, with bounded identifiers and no proof/JWT payload', async () => {
+		const f = await seedCreationDelivery(), other = await seedCreationDelivery(deliveryIdentity('other'));
+		const ids = [f.id, other.id].sort();
+		expect(await repository(f).due(1)).toEqual(ids.slice(0, 1));
+		expect(await repository(other).due()).toEqual(ids);
 		for (const limit of [0, 51, 1.5, NaN]) await expect(repository(f).due(limit)).rejects.toThrow();
 	});
 	it('does not acknowledge a SQL failure while recovering an ambiguous send', async () => {

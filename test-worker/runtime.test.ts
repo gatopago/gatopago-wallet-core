@@ -39,10 +39,10 @@ describe('Wallet Core composed entrypoint: real D1, signed grants, synthetic pro
     for (const path of ['/health/live', '/health/ready']) {
       expect((await exports.default.fetch(`https://local.invalid${path}`)).status).toBe(404);
     }
-    // The shipped staging catalog is enabled now. Exercise an empty catalog
+    // The shipped production catalog is enabled now. Exercise an empty catalog
     // explicitly, without depending on the deployment manifest's current state.
     const settings = runtimeFixture();
-    const worker = createWalletWorker({ schema_version: 1, staging: [], production: [] },
+    const worker = createWalletWorker({ schema_version: 1, production: [] },
       () => ({ ...settings.environment, wallet_enabled: [] }));
     const response = await worker.fetch(new Request('https://local.invalid/app/v1/health/ready'),
       { ...env, ...settings.bindings });
@@ -58,7 +58,7 @@ describe('Wallet Core composed entrypoint: real D1, signed grants, synthetic pro
     const worker = createWalletWorker();
     const request = () => new Request('http://localhost:8787/app/v1/auth/login/options', { method: 'POST',
       headers: { Origin: bindings.GATOPAGO_WEB_ORIGIN, 'Content-Type': 'application/json',
-        'CF-Connecting-IP': '127.0.0.1', ...clientMutationHeaders('staging') }, body: '{}' });
+        'CF-Connecting-IP': '127.0.0.1', ...clientMutationHeaders('production') }, body: '{}' });
     const result = await worker.fetch(request(), bindings);
     expect(result.status).toBe(200);
     expect(await result.json()).toMatchObject({ scope: { rpId: 'localhost', origin: 'http://localhost:3000' } });
@@ -68,7 +68,7 @@ describe('Wallet Core composed entrypoint: real D1, signed grants, synthetic pro
   it('reports the configured relay address without revealing keys or endpoint credentials', async () => {
     const { settings, bindings } = await composed();
     const key = generatePrivateKey();
-    const catalog = { ...settings.catalog, staging: [{ ...settings.network, transport: {
+    const catalog = { ...settings.catalog, production: [{ ...settings.network, transport: {
       kind: 'self', endpoint: 'observer_a', maxGas: '2000000', maxFeePerGas: '100000000', maxPriorityFeePerGas: '0',
     } }] };
     const worker = createWalletWorker(catalog, () => settings.environment);
@@ -90,7 +90,7 @@ describe('Wallet Core composed entrypoint: real D1, signed grants, synthetic pro
     expect(body).toMatchObject({ account_profiles: [{ generation: '3', contract_manifest_version: settings.profile.deployment.manifest_id }] });
     expect(JSON.stringify(body)).not.toContain('observer-');
     const anonymous = new Request(settings.environment.api_origin + '/app/v1/account-initializations', { method: 'POST',
-      headers: { Origin: settings.environment.web_origin, 'Content-Type': 'application/json', ...clientMutationHeaders('staging',
+      headers: { Origin: settings.environment.web_origin, 'Content-Type': 'application/json', ...clientMutationHeaders('production',
         { generation: '3', contract_manifest_version: settings.profile.deployment.manifest_id }) }, body: '{}' });
     expect((await worker.fetch(anonymous, bindings)).status).toBe(401);
     expect(f.fetch).not.toHaveBeenCalled();
@@ -123,7 +123,8 @@ describe('Wallet Core composed entrypoint: real D1, signed grants, synthetic pro
     const response = await worker.fetch(new Request('https://local.invalid/app/v1/health/ready'), bindings);
     expect(response.status).toBe(503);
     expect(await response.text()).not.toContain('private-token');
-    const identity = await worker.fetch(new Request(settings.environment.api_origin + '/app/v1/session', { headers: { Origin: settings.environment.web_origin } }), bindings);
+    const identity = await worker.fetch(new Request(settings.environment.api_origin + '/app/v1/session', { headers: {
+      Origin: settings.environment.web_origin, ...clientMutationHeaders('production') } }), bindings);
     expect(identity.status).toBe(401);
   });
   it('refuses creation when independent observers disagree on the finalized checkpoint', async () => {
@@ -146,7 +147,7 @@ describe('Wallet Core composed entrypoint: real D1, signed grants, synthetic pro
   it('composes the optional sponsor without serializing its signing capability into route profiles', async () => {
     const settings = runtimeFixture(), key = generatePrivateKey();
     const bindings = { ...env, ...settings.bindings, WALLET_BACKUP_SIGNER_KEY: key };
-    const catalog = { ...settings.catalog, staging: [{ ...settings.network, backupSponsor: {
+    const catalog = { ...settings.catalog, production: [{ ...settings.network, backupSponsor: {
       operator: privateKeyToAccount(key).address, maxGas: '1000000', maxFeePerGas: '1000000000',
       maxPriorityFeePerGas: '0', maxExecutionFee: '1000000000000000',
     } }] };

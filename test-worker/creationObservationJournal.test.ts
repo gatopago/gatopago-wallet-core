@@ -83,11 +83,9 @@ describe('durable creation observation journal and service in real D1', () => {
 		expect(await f.journal().due()).toEqual([f.id]); expect(await f.run()).toBe('observed');
 		expect((await deliveryOutbox(f.id))?.state).toBe('accepted');
 	});
-	it('does not expose another environment through internal observation or sweep', async () => {
+	it('rejects unsupported namespaces before internal observation or sweep', async () => {
 		const f = await scenario();
-		const other = new CreationObservationJournal(env.WALLET_DB, { ...f.configuration, profiles: f.configuration.networks, environment: 'production' as const });
-		expect(await other.due()).toEqual([]);
-		await expect(other.claim(f.id)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+		expect(() => new CreationObservationJournal(env.WALLET_DB, { ...f.configuration, profiles: f.configuration.networks, environment: 'unsupported' as never })).toThrow();
 		expect(f.fetch).not.toHaveBeenCalled();
 	});
 	it('expired workers cannot append or overwrite a newer lease, even after its completion', async () => {

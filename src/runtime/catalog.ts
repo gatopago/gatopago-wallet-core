@@ -30,6 +30,5 @@ export const arbitrumSepolia = {
 export default function catalog(environment: Environment) {
   return { schema_version: 1,
     [environment.environment]: environment.wallet_enabled.includes(deployment.network_id) ? [arbitrumSepolia] : [],
-    [environment.environment === 'staging' ? 'production' : 'staging']: [],
   };
 }

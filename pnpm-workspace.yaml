@@ -2,29 +2,16 @@ packages: []
 minimumReleaseAge: 10080
 blockExoticSubdeps: true
 trustPolicy: no-downgrade
-trustPolicyExclude:
-  - semver@6.3.1
 overrides:
-  '@gatopago/shared@3.1.0': file:vendor/gatopago-shared-3.1.0.tgz
+  '@gatopago/shared@3.1.1': file:vendor/gatopago-shared-3.1.1.tgz
   # typescript-eslint 8.67.0 supports TypeScript <6.1; keep optional peer
   # resolution aligned with the workspace compiler until that range advances.
   typescript: 6.0.3
-  # Next/styled-jsx promotes this existing Babel dependency to production.
-  # GHSA-c83g-rgw3-j3cx and GHSA-73wf-gq98-2v4g are fixed from 4.28.7.
-  'browserslist@<4.28.7': '4.28.8'
-  # GHSA-w5vr-8v7q-w6rv; reuse the corrected version already used by Browserslist.
-  'baseline-browser-mapping@<2.11.0': '2.11.20'
-  '@grpc/grpc-js@<1.9.16': '>=1.9.16'
-  'protobufjs@<7.6.3': '>=7.6.3'
   'ws@<8.21.0': '>=8.21.0'
   'esbuild@>=0.18.0 <0.28.1': '>=0.28.1'
   'picomatch@>=4.0.0 <4.0.4': '>=4.0.4'
   'postcss@<8.5.23': '>=8.5.23'
   'nanoid@<3.3.18': '>=3.3.18'
-  'websocket-driver@<0.7.5': '>=0.7.5'
-  # pino's ^0.3 range otherwise selects 0.3.2, which was published without
-  # the trusted-publisher provenance present on 0.3.1.
-  slow-redact: '0.3.1'
   # @peculiar 2.9.x dropped trusted-publisher provenance. SimpleWebAuthn's
   # ranges also support the last provenance-preserving release, so keep the
   # ASN.1 parsers pinned until the publisher restores equivalent trust.
@@ -40,24 +27,6 @@ overrides:
   '@peculiar/asn1-x509': '2.8.0'
   '@peculiar/asn1-x509-attr': '2.8.0'
 allowBuilds:
-  '@firebase/util': false
-  '@swc/core': false
   esbuild: false
   sharp: false
   workerd: false
-minimumReleaseAgeExclude:
-  - brace-expansion@5.0.9
-  # Reviewed latest-compatible dependency batch (2026-08-24). Keep these
-  # exceptions version-specific so future releases still observe quarantine.
-  - '@cloudflare/vitest-pool-workers@0.22.0'
-  - '@vitest/expect@4.1.11'
-  - '@vitest/mocker@4.1.11'
-  - '@vitest/pretty-format@4.1.11'
-  - '@vitest/runner@4.1.11'
-  - '@vitest/snapshot@4.1.11'
-  - '@vitest/spy@4.1.11'
-  - '@vitest/utils@4.1.11'
-  - 'miniflare@5.20260815.0-alpha'
-  - 'vitest@4.1.11'
-  - 'wrangler@4.124.0'
-minimumReleaseAgeExcludePrune: true

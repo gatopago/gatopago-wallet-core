@@ -194,9 +194,9 @@ describe('backup observations, real local D1 and signatures', { timeout: 20_000 
   }
  });
  it('rejects another environment and unbounded discovery', async () => {
-  const f = await backupObservationScenario(), other = { ...f.configuration, environment: 'production' as const };
-  const journal = new BackupObservationJournal(env.WALLET_DB, other);
-  expect(await journal.due()).toEqual([]); await expect(journal.claim(f.id)).rejects.toThrow(); await expect(journal.latest(f.id)).rejects.toThrow();
+  const f = await backupObservationScenario(), other = { ...f.configuration, environment: 'unsupported' as never };
+  expect(() => new BackupObservationJournal(env.WALLET_DB, other)).toThrow();
+  const journal = new BackupObservationJournal(env.WALLET_DB, f.configuration);
   for (const limit of [0, 51, 1.5, NaN]) await expect(journal.due(limit)).rejects.toThrow();
   await expect(new BackupDeliveryRepository(env.WALLET_DB, { ...f.configuration, profiles: [] }).observationGrant(f.id)).rejects.toThrow();
  });

@@ -16,7 +16,7 @@ import { verifyConsumerIdentity } from '../src/auth/identity';
 import { WalletRepository } from '../src/accounts/repository';
 import { clearIdentityKeys, projectId, testIdentitySigner } from './identity.fixture';
 
-const config = parseEnvironment({ ...manifests.staging, status: 'provisioned', firebase_project_id: projectId });
+const config = parseEnvironment({ ...manifests.production, status: 'provisioned', firebase_project_id: projectId });
 const ROOT = '/app/v1/security/enrollments';
 let signer: Awaited<ReturnType<typeof testIdentitySigner>>;
 type Prepared = {
@@ -27,14 +27,14 @@ type Prepared = {
 async function input(path = ROOT, body: unknown = { request_id: createResourceId('operation') }, subject = 'test-user-a', method = 'POST') {
 	return new Request(`${config.api_origin}${path}`, { method, headers: {
 		Origin: config.web_origin, Authorization: `Bearer ${await signer.token({ sub: subject })}`,
-		'Content-Type': 'application/json', ...clientMutationHeaders('staging'),
+		'Content-Type': 'application/json', ...clientMutationHeaders('production'),
 	}, ...(method === 'POST' ? { body: JSON.stringify(body) } : {}) });
 }
 const run = (request: Request) => enrollmentRoute(request, env, config);
 // Count additional enrollments separately from the passkey that admitted each user.
 const count = () => env.WALLET_DB.prepare('SELECT count(*) AS n FROM webauthn_credentials WHERE login_enabled = 0').first<number>('n');
 async function session(subject = 'test-user-a') {
-	return seedUser(env.WALLET_DB, await verifyConsumerIdentity(await input('/app/v1/session', {}, subject), projectId, 'staging'));
+	return seedUser(env.WALLET_DB, await verifyConsumerIdentity(await input('/app/v1/session', {}, subject), projectId, 'production'));
 }
 async function prepare(subject = 'test-user-a', id = createResourceId('operation')) {
 	const response = await run(await input(ROOT, { request_id: id }, subject));
@@ -135,7 +135,7 @@ describe('V3 authenticated credential inventory', () => {
 	it('requires bearer/project/origin ownership, but not mutation headers for a GET', async () => {
 		await session(); const request = await input(PATH, {}, 'test-user-a', 'GET');
 		request.headers.delete('Content-Type');
-		for (const key of Object.keys(clientMutationHeaders('staging'))) request.headers.delete(key);
+		for (const key of Object.keys(clientMutationHeaders('production'))) request.headers.delete(key);
 		expect((await run(request)).status).toBe(200);
 		request.headers.set('Authorization', `Bearer ${await signer.token({ aud: 'another-project' })}`);
 		expect((await run(request)).status).toBe(401);
@@ -212,7 +212,7 @@ describe('V3 owner-only credential details', () => {
 	it('limits transport to authenticated GET and exact canonical references', async () => {
 		await session(); const attempt = await prepare(); expect((await complete(attempt)).status).toBe(200);
 		const request = await input(path(attempt.enrollment_id), {}, 'test-user-a', 'GET');
-		for (const key of ['Content-Type', ...Object.keys(clientMutationHeaders('staging'))]) request.headers.delete(key);
+		for (const key of ['Content-Type', ...Object.keys(clientMutationHeaders('production'))]) request.headers.delete(key);
 		expect((await run(request)).status).toBe(200);
 		request.headers.delete('Authorization'); expect((await run(request)).status).toBe(401);
 		for (const suffix of ['?uid=user-b', '/', '/complete', '%20']) {
@@ -353,7 +353,7 @@ describe('V3 passkey enrollment: identity is not monetary authority', () => {
 			expect((await run(request)).status).toBe(status);
 		}
 		const request = await input();
-		expect((await run(new Request(request.url.replace('api.staging.', 'wrong.'), request))).status).toBe(403);
+		expect((await run(new Request(request.url.replace('api.gatopago.com', 'wrong.gatopago.com'), request))).status).toBe(403);
 	});
 	it('CORS is limited to the explicit POST transport; query parameters cannot choose the RP', async () => {
 		const request = await input(ROOT, {}, 'test-user-a', 'OPTIONS');

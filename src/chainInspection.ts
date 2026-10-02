@@ -1,5 +1,5 @@
 import { createPublicClient, custom } from 'viem';
-import { inspectAccountDeployment, type AccountInspectionInput } from '@gatopago/shared/v3/account-inspection';
+import type { AccountInspectionInput } from '@gatopago/shared/v3/account-inspection';
 import { inspectCreationDeployment, type CreationInspectionInput } from '@gatopago/shared/v3/creation-inspection';
 import { inspectAccountSecurity } from '@gatopago/shared/v3/security-inspection';
 import { readJsonBounded, discardResponseBody } from '@gatopago/shared/http';
@@ -34,14 +34,6 @@ export function createInspectionClient(rpcUrl: string, signal: AbortSignal) {
 			},
 		}, { retryCount: 0, name: 'V3 bounded inspection', key: 'v3-inspection' }),
 	});
-}
-
-/** Used by the authenticated ownership resolver AFTER mapping the user to the wallet.
- * This adds no public arbitrary-address endpoint and does not turn recognition into readiness.
- */
-export async function inspectWalletDeployment(input: AccountInspectionInput, rpcUrl: string, signal: AbortSignal) {
-	const deadline = AbortSignal.any([signal, AbortSignal.timeout(30_000)]);
-	return inspectAccountDeployment(createInspectionClient(rpcUrl, deadline), input);
 }
 
 /** Same bounded/read-only transport for original-composition verification, not an HTTP

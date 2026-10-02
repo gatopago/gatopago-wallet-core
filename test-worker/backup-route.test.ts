@@ -4,7 +4,7 @@ import { applyD1Migrations } from 'cloudflare:test';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import manifests from '@gatopago/environment/environments.json';
 import { parseEnvironment } from '@gatopago/environment';
-import { clientMutationHeaders, WALLET_RELEASE_POLICY } from '@gatopago/shared/v3/client-release';
+import { clientMutationHeaders } from '@gatopago/shared/v3/client-release';
 import { prepareBackupEnrollment } from '@gatopago/shared/v3/backup-enrollment';
 import { createResourceId } from '@gatopago/shared/v3/primitives';
 import { signerId } from '@gatopago/shared/v3/security-policy';
@@ -18,7 +18,7 @@ import { backupCommitScenario as rawCommitScenario } from './backupCommit.fixtur
 import { cleanCreationDelivery, deliveryIdentity, deliveryNow } from './creationDelivery.fixture';
 import { clearIdentityKeys, projectId, seedIdentityKeys, testIdentitySigner } from './identity.fixture';
 
-const backupRoute = createBackupRoute({ profiles: [], releasePolicy: WALLET_RELEASE_POLICY, async resolveProfiles() { throw new Error('Unexpected resolver'); } });
+const backupRoute = createBackupRoute({ profiles: [], async resolveProfiles() { throw new Error('Unexpected resolver'); } });
 
 // HTTP now authenticates the same passkey that the synthetic wallet authorizes.
 async function admitted<T extends Pick<Scenario, 'profiles' | 'prepared' | 'principal' | 'session' | 'configuration' | 'credentialRef' | 'fetch' | 'repository'>>(f: T) {
@@ -34,7 +34,7 @@ const backupScenario = async () => admitted(await rawBackupScenario());
 const backupCommitScenario = async () => admitted(await rawCommitScenario());
 
 const ROOT = '/app/v1/account-backups';
-const config = parseEnvironment({ ...manifests.staging, status: 'provisioned', firebase_project_id: projectId, wallet_enabled: ['eip155:84532'] });
+const config = parseEnvironment({ ...manifests.production, status: 'provisioned', firebase_project_id: projectId, wallet_enabled: ['eip155:84532'] });
 type Scenario = Awaited<ReturnType<typeof rawBackupScenario>>;
 type Route = ReturnType<typeof createBackupRoute>;
 let signer: Awaited<ReturnType<typeof testIdentitySigner>>;
@@ -46,12 +46,12 @@ const account = (f: Pick<Scenario, 'prepared'>) => ({ generation: '3', contract_
 async function request(f: Pick<Scenario, 'principal' | 'prepared'>, path: string, body: unknown = null, method = 'POST', subject = f.principal.userId, signal?: AbortSignal) {
  return new Request(`${config.api_origin}${path}`, { method, signal, headers: { Origin: config.web_origin, 'Content-Type': 'application/json',
   Authorization: `Bearer ${await signer.token({ sub: subject, auth_time: f.principal.authTime, ...(subject === f.principal.userId ? { credential_ref: f.principal.credentialRef } : {}) })}`,
-  ...clientMutationHeaders('staging', method === 'GET' ? undefined : account(f)) }, ...(method === 'POST' ? { body: JSON.stringify(body) } : {}) });
+  ...clientMutationHeaders('production', method === 'GET' ? undefined : account(f)) }, ...(method === 'POST' ? { body: JSON.stringify(body) } : {}) });
 }
 function candidate(f: Pick<Scenario, 'profiles' | 'configuration' | 'prepared'>) {
  const resolver = vi.fn((...args: Parameters<Scenario['profiles']>) => f.profiles(...args));
- const deps = { profiles: f.configuration.profiles.map((p) => ({ ...p, environment: 'staging' as const })),
-  releasePolicy: { ...WALLET_RELEASE_POLICY, account_profiles: [account(f)] }, resolveProfiles: resolver,
+ const deps = { profiles: f.configuration.profiles.map((p) => ({ ...p, environment: 'production' as const })),
+  resolveProfiles: resolver,
   accessProfiles: async (...args: Parameters<Scenario['profiles']>) => (await f.profiles(...args))
    .map(profile => ({ ...profile, verifier: f.prepared.profile.webauthn_verifier })) };
  return { run: createBackupRoute(deps), resolver, deps };
@@ -204,7 +204,7 @@ describe('backup HTTP boundary (actual JWT/P256/ECDSA/D1, synthetic chain only)'
   }
   expect((await c.run(await request(f, ROOT, null, 'GET'), env, config)).status).toBe(405);
   expect((await c.run(await request(f, `${ROOT}/${id}`, {}, 'POST'), env, config)).status).toBe(405);
-  const wrongOrigin = await request(f, ROOT, {}); wrongOrigin.headers.set('Origin', 'https://gatopago.com');
+  const wrongOrigin = await request(f, ROOT, {}); wrongOrigin.headers.set('Origin', 'https://other.gatopago.com');
   expect((await c.run(wrongOrigin, env, config)).status).toBe(403);
   const options = new Request(`${config.api_origin}${ROOT}`, { method: 'OPTIONS', headers: { Origin: config.web_origin,
    'Access-Control-Request-Method': 'POST', 'Access-Control-Request-Headers': 'authorization,content-type' } });
@@ -239,7 +239,7 @@ describe('backup HTTP boundary (actual JWT/P256/ECDSA/D1, synthetic chain only)'
  });
  it('copies admission and binds resolver output to the owned deployment, not the creation-document digest', async () => {
   const f = await backupScenario(), c = candidate(f), original = f.profiles;
-  c.deps.profiles.length = 0; c.deps.releasePolicy.account_profiles.length = 0;
+  c.deps.profiles.length = 0;
   c.resolver.mockImplementation(async (owned, signal) => (await original(owned, signal)).map((p) => ({ ...p, digest: f.configuration.profiles[0].digest })));
   expect((await c.run(await request(f, ROOT, wire(f.request())), env, config)).status).toBe(503);
   expect(f.fetch).not.toHaveBeenCalled(); expect(await counts()).toEqual({ backups: 0, commits: 0 });

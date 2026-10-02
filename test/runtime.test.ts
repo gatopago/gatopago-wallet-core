@@ -17,12 +17,12 @@ describe('reviewed Wallet Core runtime configuration', () => {
   });
   it.each(['digest', 'unprovisioned', 'disabled-network', 'duplicate-network', 'operator-overlap', 'host-overlap',
     'missing-endpoint', 'unsafe-endpoint', 'bad-gas', 'priority-fee', 'wrong-asset-network', 'missing-native',
-    'expired-policy', 'unknown-field', 'malformed-secrets'] as const)('rejects %s before creating any transport', fault => {
+    'expired-policy', 'unknown-field', 'malformed-secrets', 'legacy-catalog'] as const)('rejects %s before creating any transport', fault => {
     const f = runtimeFixture();
     if (fault === 'digest') f.network.creationProfile.digest = `0x${'a'.repeat(64)}`;
     if (fault === 'unprovisioned') f.environment.status = 'unprovisioned';
     if (fault === 'disabled-network') f.environment.wallet_enabled = [];
-    if (fault === 'duplicate-network') f.catalog.staging.push(structuredClone(f.network));
+    if (fault === 'duplicate-network') f.catalog.production.push(structuredClone(f.network));
     if (fault === 'operator-overlap') f.network.rpc[1].operatorId = f.network.rpc[0].operatorId;
     if (fault === 'host-overlap') f.bindings.WALLET_RPC_ENDPOINTS = JSON.stringify({ observer_a: 'https://same.invalid/a', observer_b: 'https://same.invalid/b', bundler: 'https://bundler.invalid' });
     if (fault === 'missing-endpoint') f.network.transport.endpoint = 'missing';
@@ -34,13 +34,14 @@ describe('reviewed Wallet Core runtime configuration', () => {
     if (fault === 'expired-policy') f.network.finalityPolicy = finalityPin(finalityPolicyFixture(f.profile.deployment, Math.floor(Date.now() / 1000) - 86401));
     if (fault === 'unknown-field') Object.assign(f.network, { skipValidation: true });
     if (fault === 'malformed-secrets') f.bindings.WALLET_RPC_ENDPOINTS = 'secret-invalid-json';
+    if (fault === 'legacy-catalog') Reflect.deleteProperty(f.network, 'paymaster');
     expect(() => configureWalletNetworks(f.catalog, f.environment, f.bindings)).toThrow(/^WALLET_RUNTIME_CONFIGURATION_INVALID$/);
   });
   it('admits a separately pinned paymaster with bounded budgets and rejects unlimited policy', () => {
     const f = runtimeFixture(), signer = privateKeyToAccount(generatePrivateKey()).address;
     const paymaster = { address: signer, codeHash: `0x${'ab'.repeat(32)}`, signer, verificationGasLimit: '100000', postOpGasLimit: '0',
       maximumCostWei: '1000000000000000', dailyGwei: 10000000, userDailyGwei: 1000000, userDailyOperations: 10 };
-    const catalog = (p: typeof paymaster) => ({ ...f.catalog, staging: [{ ...f.network, paymaster: p }] });
+    const catalog = (p: typeof paymaster) => ({ ...f.catalog, production: [{ ...f.network, paymaster: p }] });
     expect(configureWalletNetworks(catalog(paymaster), f.environment, f.bindings)[0].paymaster).toEqual(paymaster);
     for (const changed of [{ ...paymaster, userDailyGwei: 10000001 }, { ...paymaster, maximumCostWei: '0' },
       { ...paymaster, userDailyOperations: 0 }, { ...paymaster, codeHash: `0x${'00'.repeat(32)}` }]) {
@@ -51,7 +52,7 @@ describe('reviewed Wallet Core runtime configuration', () => {
     const f = runtimeFixture(), key = generatePrivateKey();
     const transport = { kind: 'self', endpoint: 'observer_a', maxGas: '2000000',
       maxFeePerGas: '100000000', maxPriorityFeePerGas: '0' };
-    const catalog = { ...f.catalog, staging: [{ ...f.network, transport }] };
+    const catalog = { ...f.catalog, production: [{ ...f.network, transport }] };
     const bindings = { ...f.bindings, PRIVATE_KEY: key,
       WALLET_RPC_ENDPOINTS: JSON.stringify({ observer_a: 'https://observer-a.invalid/', observer_b: 'https://observer-b.invalid/' }) };
     const [network] = configureWalletNetworks(catalog, f.environment, bindings);
@@ -62,14 +63,14 @@ describe('reviewed Wallet Core runtime configuration', () => {
     }
     for (const changed of [{ ...transport, kind: 'unknown' }, { ...transport, maxGas: '30000001' },
       { ...transport, maxPriorityFeePerGas: '100000001' }, { ...transport, endpoint: 'missing' }]) {
-      expect(() => configureWalletNetworks({ ...catalog, staging: [{ ...f.network, transport: changed }] }, f.environment, bindings))
+      expect(() => configureWalletNetworks({ ...catalog, production: [{ ...f.network, transport: changed }] }, f.environment, bindings))
         .toThrow('WALLET_RUNTIME_CONFIGURATION_INVALID');
     }
   });
   it('binds the optional gas sponsor to the reviewed operator, never to an arbitrary supplied key', () => {
     const f = runtimeFixture(), key = generatePrivateKey(), operator = privateKeyToAccount(key).address;
     const sponsor = { operator, maxGas: '1000000', maxFeePerGas: '1000000000', maxPriorityFeePerGas: '0', maxExecutionFee: '1000000000000000' };
-    const catalog = { ...f.catalog, staging: [{ ...f.network, backupSponsor: sponsor }] };
+    const catalog = { ...f.catalog, production: [{ ...f.network, backupSponsor: sponsor }] };
     expect(configureWalletNetworks(catalog, f.environment, { ...f.bindings, WALLET_BACKUP_SIGNER_KEY: key })[0].backup?.signer.operator).toBe(operator.toLowerCase());
     expect(() => configureWalletNetworks(catalog, f.environment, { ...f.bindings, WALLET_BACKUP_SIGNER_KEY: generatePrivateKey() })).toThrow('WALLET_RUNTIME_CONFIGURATION_INVALID');
     expect(configureWalletNetworks(catalog, f.environment, f.bindings)[0].backup).toBeUndefined();

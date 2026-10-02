@@ -9,7 +9,7 @@ beforeAll(async () => { await applyD1Migrations(env.WALLET_DB, env.V3_TEST_MIGRA
 beforeEach(async () => {
   await env.WALLET_DB.exec('DELETE FROM sponsorship_reservations; DELETE FROM users;');
   await env.WALLET_DB.batch(['user-a', 'other-user', ...Array.from({ length: 20 }, (_, i) => `u-${i}`)]
-    .map(label => env.WALLET_DB.prepare("INSERT INTO users(id,environment,created_at) VALUES (?,'staging',?)").bind(testUserId(label), now)));
+    .map(label => env.WALLET_DB.prepare("INSERT INTO users(id,environment,created_at) VALUES (?,'production',?)").bind(testUserId(label), now)));
 });
 const now = 1_800_000_000;
 const input = (id: number, subject = 'user-a') => ({ digest: toHex(id, { size: 32 }), scope: `421614:0x${'ab'.repeat(20)}`, userId: testUserId(subject),

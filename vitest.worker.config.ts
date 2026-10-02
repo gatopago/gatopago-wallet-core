@@ -10,7 +10,7 @@ export default defineConfig({
       // Installed workerd's supported date; same restriction as the existing suite.
       compatibilityDate: '2026-07-08',
       bindings: {
-        GATOPAGO_ENVIRONMENT: 'staging', FIREBASE_PROJECT_ID: 'v3-runtime-test',
+        GATOPAGO_ENVIRONMENT: 'production', FIREBASE_PROJECT_ID: 'v3-runtime-test',
         TURNSTILE_SECRET_KEY: 'synthetic-turnstile-secret-for-tests',
         AUTH_RATE_LIMIT_PEPPER: 'synthetic-hmac-pepper-for-tests-only',
         V3_TEST_MIGRATIONS: await readD1Migrations(fileURLToPath(new URL('./migrations', import.meta.url))),

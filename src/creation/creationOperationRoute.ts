@@ -3,7 +3,7 @@ import type { Principal } from '../auth/principal';
 import { prepareCreationOperation } from '@gatopago/shared/v3/creation-operation';
 import { abortable } from '../deadline';
 import type { Environment } from '@gatopago/environment';
-import { CLIENT_RELEASE_HEADERS, type ReleasePolicy } from '@gatopago/shared/v3/client-release';
+import { CLIENT_RELEASE_HEADERS } from '@gatopago/shared/v3/client-release';
 import { type CreationGasTerms } from '@gatopago/shared/v3/creation-operation';
 import { parseCreationCapRequest } from '@gatopago/shared/v3/creation-operation-wire';
 import { loadPinnedCreationProfile } from '@gatopago/shared/v3/initialization';
@@ -14,7 +14,7 @@ import { validateIdentityConfig, type AuthBindings } from '../auth/config';
 import { IdentityError } from '../auth/identity';
 import { verifyAppSession } from '../auth/session';
 import type { ReceivingProfiles } from '../accounts/profile';
-import { requireCompatibleMutation } from '../clientCompatibility';
+import { requireCurrentProtocol } from '../clientProtocol';
 import { allowMethods, isJsonRequest, v3Json } from '../http';
 import { InitializationError, InitializationRepository, type CreationProfilePin } from './initialization';
 import { CreationOperationError, CreationOperationRepository } from './creationOperation';
@@ -32,12 +32,10 @@ type Initial = Awaited<ReturnType<InitializationRepository['readAuthorized']>>;
 export function createCreationOperationRoute(dependencies: {
   readonly accessProfiles?: ReceivingProfiles;
 	readonly profiles: readonly (CreationProfilePin & { readonly environment: Environment['environment'] })[];
-	readonly releasePolicy: ReleasePolicy;
 	readonly requireFreshDeployment: (pin: CreationProfilePin, signal: AbortSignal) => Promise<void>;
 	readonly sponsor?: (pin: CreationProfilePin, database: D1Database, identity: Principal, signal: AbortSignal) => GasSponsor | undefined;
 	readonly quoteGas: (pin: CreationProfilePin, initial: Initial, cap: bigint, signal: AbortSignal) => Promise<CreationGasTerms>;
 }) {
-	const policy = structuredClone(dependencies.releasePolicy);
 	const profiles = dependencies.profiles.map((p) => Object.freeze({ pin: Object.freeze({ document: p.document, digest: p.digest }),
 		environment: p.environment, deployment: loadPinnedCreationProfile(p.document, p.digest).deployment }));
 	if (profiles.length > 32 || new Set(profiles.map((p) => `${p.environment}:${p.pin.digest}`)).size !== profiles.length) throw new Error('Invalid creation catalog');
@@ -56,7 +54,7 @@ export function createCreationOperationRoute(dependencies: {
 		const methodResponse = allowMethods(request, origin, methods, headers);
 		if (methodResponse) return methodResponse;
 		const reading = request.method === 'GET';
-		const incompatible = requireCompatibleMutation(request, config, reading ? 'identity' : 'account', policy);
+		const incompatible = requireCurrentProtocol(request, config, reading ? 'identity' : 'account', profiles.map(p => p.deployment.manifest_id));
 		if (incompatible) return incompatible;
 		if (!reading && !isJsonRequest(request)) return respond(400, { error_code: 'INVALID_CREATION_REQUEST' });
 		const available = profiles.filter((p) => p.environment === config.environment && (reading ||

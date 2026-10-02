@@ -3,7 +3,7 @@ import { environmentFromVariables } from '@gatopago/environment';
 import { configuredEnvironment, validateAuthConfig, type AuthBindings } from '../src/auth/config';
 import { verifyHuman } from '../src/auth/providers';
 
-const variables = { GATOPAGO_ENVIRONMENT: 'staging', GATOPAGO_WEB_ORIGIN: 'http://localhost:3000',
+const variables = { GATOPAGO_ENVIRONMENT: 'production', GATOPAGO_WEB_ORIGIN: 'http://localhost:3000',
   GATOPAGO_API_ORIGIN: 'http://localhost:8787', GATOPAGO_BUSINESS_ORIGIN: 'http://localhost:3000',
   GATOPAGO_WALLET_NETWORKS: 'eip155:421614', FIREBASE_PROJECT_ID: 'v3-local-test' };
 const local = environmentFromVariables(variables);

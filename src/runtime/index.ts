@@ -4,7 +4,6 @@ import type { Principal } from '../auth/principal';
 import { evmChainId } from '@gatopago/shared/v3/primitives';
 import type { Hex } from 'viem';
 import type { Environment } from '@gatopago/environment';
-import { WALLET_RELEASE_POLICY } from '@gatopago/shared/v3/client-release';
 import { createInitializationRoute } from '../creation/initializationRoute';
 import { createCreationOperationRoute } from '../creation/creationOperationRoute';
 import { createBackupRoute } from '../security/backupRoute';
@@ -48,9 +47,9 @@ export function createWalletRuntime(env: WalletCoreV3Bindings, environment: Envi
         finalityPolicy: network.finalityPolicy, finalityEvidence: await networkFinality(network, signal),
         verifier: loadPinnedCreationProfile(network.document, network.digest).webauthn_verifier }];
     };
-  const releasePolicy = { ...WALLET_RELEASE_POLICY, account_profiles: networks.map(n => ({
+  const accountProfiles = networks.map(n => ({
     generation: String(n.deployment.generation), contract_manifest_version: n.deployment.manifest_id,
-  })) };
+  }));
   const requireFreshDeployment = (pin: CreationProfilePin, signal: AbortSignal) => requireFreshCreationDeployment(byPin(pin), signal);
   const scope = { rpId: environment.webauthn_rp_id, origin: environment.web_origin };
   const identity = { environment: environment.environment, scope };
@@ -62,7 +61,7 @@ export function createWalletRuntime(env: WalletCoreV3Bindings, environment: Envi
   const transfer = createTransferJobHandlers(() => ({ environment: environment.environment,
     profiles: networks.map(n => n.transferProfile) }));
   return {
-    releasePolicy,
+    accountProfiles,
     configured: networks.length > 0,
     networks: networks.map(n => ({ network_id: n.deployment.network_id, transport: n.transport.kind,
       relayer_address: n.transport.kind === 'self' ? n.transport.policy.operator : null })),
@@ -77,8 +76,8 @@ export function createWalletRuntime(env: WalletCoreV3Bindings, environment: Envi
       }));
       if (results.some(result => result.status === 'rejected')) throw new Error('RELAYER_RECOVERY_UNAVAILABLE');
     },
-    initialization: createInitializationRoute({ accessProfiles: receivingProfiles, profiles: networks, releasePolicy, requireFreshDeployment }),
-    creationOperation: createCreationOperationRoute({ accessProfiles: receivingProfiles, profiles: networks, releasePolicy, requireFreshDeployment,
+    initialization: createInitializationRoute({ accessProfiles: receivingProfiles, profiles: networks, requireFreshDeployment }),
+    creationOperation: createCreationOperationRoute({ accessProfiles: receivingProfiles, profiles: networks, requireFreshDeployment,
       sponsor: (pin, database, identity, signal) => sponsor(byPin(pin), database, identity, signal),
       async quoteGas(pin, _initial, cap, signal) {
         signal.throwIfAborted();
@@ -88,13 +87,13 @@ export function createWalletRuntime(env: WalletCoreV3Bindings, environment: Envi
         // must simulate the exact signed operation within them before delivery.
         return { ...terms, maximumGasCharge: cap };
       } }),
-    backup: createBackupRoute({ accessProfiles: receivingProfiles, profiles: networks, releasePolicy, async resolveProfiles(owned, signal) {
+    backup: createBackupRoute({ accessProfiles: receivingProfiles, profiles: networks, async resolveProfiles(owned, signal) {
       const network = forAccount(owned);
       if (!network.backup) throw new BackupError('BACKUP_PROFILE_UNAVAILABLE');
       return [{ ...network.transferProfile, rpcUrls: [network.providers[0].url, network.providers[1].url] as const,
         finalityEvidence: await networkFinality(network, signal) }];
     } }),
-    transfer: createTransferRoute({ relayerKey: env.PRIVATE_KEY as `0x${string}` | undefined, accessProfiles: receivingProfiles, profiles: networks.map(n => n.transferProfile), releasePolicy,
+    transfer: createTransferRoute({ relayerKey: env.PRIVATE_KEY as `0x${string}` | undefined, accessProfiles: receivingProfiles, profiles: networks.map(n => n.transferProfile),
       sponsor: (profile, database, identity, signal) => {
         const network = networks.find(n => n.transferProfile.digest === profile.digest);
         if (!network) throw new Error('RUNTIME_PROFILE_UNAVAILABLE');

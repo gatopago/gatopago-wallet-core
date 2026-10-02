@@ -27,14 +27,11 @@ import { formatUserOperationRequest } from 'viem/account-abstraction';
 import { observeOwnedTransfer, observeTransferJob } from '../src/transfers/transferObservation';
 import * as receiptReader from '../src/transfers/transferReceiptObservation';
 import * as transferObserver from '../src/transfers/transferObservation';
-import { recordOwnedTransferFinality } from '../src/transfers/transferReconciliation';
 import { readOwnedTransferStatus } from '../src/transfers/transferStatus';
 import { walletReadRoute } from '../src/accounts/route';
 import * as sessionVerifier from '../src/auth/session';
 import manifests from '@gatopago/environment/environments.json';
 import { parseEnvironment } from '@gatopago/environment';
-import { observeTransferReconciliationBalance } from '../src/transfers/transferBalanceReconciliation';
-import { reconcileOwnedTransfer } from '../src/transfers/transferReconciliationCommit';
 import { TransferJobRepository, parseTransferWake, type TransferWake } from '../src/transfers/transferJobs';
 import { recordTransferJobFinality } from '../src/transfers/transferJobFinality';
 import { reconcileTransferJob } from '../src/transfers/transferJobReconciliation';
@@ -48,7 +45,7 @@ import * as preparationCoordinator from '../src/transfers/transferPreparation';
 import * as confirmationCoordinator from '../src/transfers/transferConfirmation';
 import * as deliveryCoordinator from '../src/transfers/transferDelivery';
 import { createTransferRoute } from '../src/transfers/transferRoute';
-import { CLIENT_RELEASE_HEADERS, clientMutationHeaders, WALLET_RELEASE_POLICY } from '@gatopago/shared/v3/client-release';
+import { CLIENT_RELEASE_HEADERS, clientMutationHeaders, CLIENT_RELEASE_ID } from '@gatopago/shared/v3/client-release';
 
 beforeAll(() => applyD1Migrations(env.WALLET_DB, env.V3_TEST_MIGRATIONS));
 beforeEach(async () => {
@@ -61,10 +58,15 @@ afterEach(async () => {
   await env.WALLET_DB.exec('DROP TRIGGER IF EXISTS transfer_job_test_failure');
 });
 
-async function setup(native = true) {
+async function setup(native = true, currentRelease = false) {
   const f = transferFixture(native);
+  if (currentRelease) {
+    f.request.client_release_id = CLIENT_RELEASE_ID;
+    f.p = prepareTransferOperation(f.request, f.context, f.now);
+    f.approval.reviewed_digest = f.p.digest;
+  }
   const clock = vi.spyOn(Date, 'now').mockReturnValue((f.now + 1) * 1000);
-  const identity: Principal = testPrincipal('owner', { environment: 'staging' });
+  const identity: Principal = testPrincipal('owner', { environment: 'production' });
   const session = await seedUser(env.WALLET_DB, identity);
   const accountId = createResourceId('walletAccount');
   await env.WALLET_DB.batch([
@@ -108,8 +110,8 @@ describe('V3 pre-delivery nonce reservation with real D1', () => {
   it.each(['prepare', 'read', 'confirm', 'deliver', 'origin', 'method', 'query', 'version', 'wallet', 'extra-fields',
     'too-large', 'foreign', 'disabled-network', 'no-profile', 'options', 'bad-cors', 'asset', 'delivery-digest', 'confirm-release', 'deliver-release'])(
     'enforces the authenticated transfer HTTP boundary: %s', async scenario => {
-      const s = await setup(), f = s.f;
-      const config = parseEnvironment({ ...manifests.staging, status: 'provisioned', firebase_project_id: 'v3-runtime-test',
+      const s = await setup(true, true), f = s.f;
+      const config = parseEnvironment({ ...manifests.production, status: 'provisioned', firebase_project_id: 'v3-runtime-test',
         wallet_enabled: scenario === 'disabled-network' ? [] : [f.request.network_id] });
       // Session admission is exercised with real JWT/WebAuthn/RPC in access.test.ts.
       vi.spyOn(sessionVerifier, 'verifyAppSession').mockResolvedValue(scenario === 'foreign' ? { ...s.identity, userId: 'other' } : s.identity);
@@ -118,7 +120,7 @@ describe('V3 pre-delivery nonce reservation with real D1', () => {
       const authorization = await s.signed(), held = await s.repository().reserve(s.accountId, authorization);
       const root = `/app/v1/wallets/${f.request.wallet_id}/accounts/${s.accountId}`;
       const otherAsset = `${f.request.network_id}/erc20:0x${'ab'.repeat(20)}`;
-      const profile = { environment: 'staging' as const, document: f.approval.security_evidence.document,
+      const profile = { environment: 'production' as const, document: f.approval.security_evidence.document,
         digest: f.context.deployment_digest, finalityPolicy: f.approval.security_evidence.finality_policy,
         entryPointCodeHash: `0x${'ee'.repeat(32)}` as const, transport: { kind: 'bundler' as const, url: 'https://bundler.example/rpc' },
         providers: [{ operatorId: 'provider-a', url: 'https://a.example/rpc' }, { operatorId: 'provider-b', url: 'https://b.example/rpc' }],
@@ -128,9 +130,7 @@ describe('V3 pre-delivery nonce reservation with real D1', () => {
         request: f.request, wallet_account_id: s.accountId, deployment_digest: f.context.deployment_digest,
         native_asset_id: f.context.native_asset_id, gas: f.context.gas, maximum_native_gas_atomic: '1000',
         platform_fee: f.context.budget.platform_fee, fee_recipient: null, observed_at: f.now, expires_at: f.now + 20 } }));
-      const route = createTransferRoute({ profiles: scenario === 'no-profile' ? [] : [profile], resolvePreparation: resolve,
-        releasePolicy: { ...WALLET_RELEASE_POLICY, releases: [{ client_release_id: 'v3-test', accepted_until: null },
-          { client_release_id: 'v3-other', accepted_until: null }], account_profiles: [account] } });
+      const route = createTransferRoute({ profiles: scenario === 'no-profile' ? [] : [profile], resolvePreparation: resolve });
       const prepareSpy = vi.spyOn(preparationCoordinator, 'prepareOwnedTransfer').mockResolvedValue(prepared);
       const confirmSpy = vi.spyOn(confirmationCoordinator, 'confirmOwnedTransfer').mockResolvedValue({ ...held, preparation_id: saved.id, consent_digest: f.p.digest });
       const deliverSpy = vi.spyOn(deliveryCoordinator, 'deliverOwnedTransfer').mockResolvedValue({ operation_id: held.id,
@@ -142,7 +142,7 @@ describe('V3 pre-delivery nonce reservation with real D1', () => {
       if (scenario === 'read') { path += `/${saved.id}`; method = 'GET'; }
       if (scenario.startsWith('confirm')) {
         path += `/${saved.id}/confirm`;
-        body = { consent_digest: f.p.digest, proofs: (await f.proofs()).map(p => p.kind === 'ecdsa'
+        body = { consent_digest: f.p.digest, proofs: (await f.proofs(f.p.digest)).map(p => p.kind === 'ecdsa'
           ? { signer_index: p.signerIndex, kind: p.kind, signature: p.signature }
           : { signer_index: p.signerIndex, kind: p.kind, assertion: { authenticator_data: Buffer.from(p.assertion.authenticatorData).toString('base64url'),
             client_data: Buffer.from(p.assertion.clientDataJSON).toString('base64url'), signature: Buffer.from(p.assertion.signatureDER).toString('base64url') } }) };
@@ -151,9 +151,9 @@ describe('V3 pre-delivery nonce reservation with real D1', () => {
       if (scenario === 'method') method = 'GET';
       if (scenario === 'options' || scenario === 'bad-cors') method = 'OPTIONS';
       const headers = new Headers({ Origin: scenario === 'origin' ? 'https://wrong.example' : config.web_origin,
-        'Content-Type': 'application/json', Authorization: 'Bearer synthetic', ...clientMutationHeaders('staging', account),
+        'Content-Type': 'application/json', Authorization: 'Bearer synthetic', ...clientMutationHeaders('production', account),
         'Access-Control-Request-Method': 'POST', 'Access-Control-Request-Headers': scenario === 'bad-cors' ? 'X-Untrusted' : 'Authorization, Content-Type' });
-      headers.set(CLIENT_RELEASE_HEADERS.release, scenario === 'version' ? 'outdated' : scenario.endsWith('-release') ? 'v3-other' : 'v3-test');
+      headers.set(CLIENT_RELEASE_HEADERS.release, scenario === 'version' ? 'outdated' : scenario.endsWith('-release') ? 'v3-other' : CLIENT_RELEASE_ID);
       const response = await route(new Request(`${config.api_origin}${path}${scenario === 'query' ? '?rpc=override' : ''}`, { method, headers,
         ...(method === 'POST' ? { body: scenario === 'too-large' ? ' '.repeat(8193) : JSON.stringify(body) } : {}) }),
         { ...env, FIREBASE_PROJECT_ID: 'v3-runtime-test' }, config);
@@ -513,7 +513,8 @@ describe('V3 pre-delivery nonce reservation with real D1', () => {
         const message = (await jobs.reserve(held.id))!;
         expect(Object.keys(message).sort()).toEqual(['schema_version','kind','operation_id','token'].sort());
         if (scenario === 'scope') {
-          const other = new TransferJobRepository(env.WALLET_DB, { ...config, environment: 'production' as const });
+          expect(() => new TransferJobRepository(env.WALLET_DB, { ...config, environment: 'unsupported' as never })).toThrow();
+          const other = new TransferJobRepository(env.WALLET_DB, { ...config, profiles: [] });
           expect(await other.due()).toEqual([]); expect(await other.reserve(held.id)).toBeNull();
           expect(await other.claim(message)).toBe(false); expect(await jobs.claim(message)).toBe(true);
           expect(await other.defer(message, 30)).toBe(false); expect(await other.review(message, 'observation_timeout')).toBe(false);
@@ -591,7 +592,7 @@ describe('V3 pre-delivery nonce reservation with real D1', () => {
     'exposes only an owned read-only transfer status over HTTP: %s', async fault => {
       const s = await setup(), a = await s.signed(), held = await s.repository().reserve(s.accountId, a);
       if (fault === 'pending') await s.repository().beginDelivery(a.request.wallet_id, s.accountId, await deliveryProof(s, a, held.id));
-      const config = parseEnvironment({ ...manifests.staging, status: 'provisioned', firebase_project_id: 'v3-runtime-test' });
+      const config = parseEnvironment({ ...manifests.production, status: 'provisioned', firebase_project_id: 'v3-runtime-test' });
       vi.spyOn(sessionVerifier, 'verifyAppSession').mockResolvedValue(fault === 'foreign'
         ? { ...s.identity, userId: 'another-user' } : s.identity);
       const request = new Request(`${config.api_origin}/app/v1/wallets/${a.request.wallet_id}/accounts/${s.accountId}/transfers/${fault === 'invalid-id' ? 'wrong' : fault === 'missing-id' ? createResourceId('operation') : held.id}${fault === 'query' ? '?rpc=https://evil.example' : ''}`,
@@ -611,10 +612,10 @@ describe('V3 pre-delivery nonce reservation with real D1', () => {
       expect(JSON.stringify(body)).not.toContain(a.operation.signature);
       expect((await rows()).results[0].state).toBe(fault === 'pending' ? 'delivery_pending' : 'held');
     });
-  it.each(['recorded', 'concurrent', 'conflict', 'concurrent-conflict', 'unavailable', 'expired', 'revoked', 'wrong-operation',
-    'balance-current','balance-old','balance-account','balance-assets','balance-expired','balance-reorg',
+  it.each(['recorded', 'concurrent', 'conflict', 'concurrent-conflict', 'unavailable', 'expired', 'lost-lease', 'wrong-operation',
+    'balance-old','balance-account','balance-assets','balance-expired','balance-reorg',
     'balance-commit','balance-commit-floor','balance-commit-hash'])(
-    'preserves immutable finality separately from reservation release: %s', async fault => {
+    'preserves job finality and atomically reconciles reservations: %s', async fault => {
       const s = await setup(), a = await s.signed(), held = await s.repository().reserve(s.accountId, a);
       await s.repository().beginDelivery(a.request.wallet_id, s.accountId, await deliveryProof(s, a, held.id));
       const transaction = `0x${'11'.repeat(32)}` as const;
@@ -632,9 +633,11 @@ describe('V3 pre-delivery nonce reservation with real D1', () => {
         finality_evidence: { ...s.f.approval.security_evidence.finality, target: block, checkpoint: block,
           assessed_at: s.f.now + 1, expires_at: s.f.now + 6 },
       };
-      const observer = vi.spyOn(transferObserver, 'observeOwnedTransfer').mockResolvedValue(result);
-      const invoke = () => recordOwnedTransferFinality(env.WALLET_DB, s.identity, a.request.wallet_id, s.accountId, held.id,
-        undefined, [profile], new AbortController().signal);
+      const jobs = new TransferJobRepository(env.WALLET_DB, { environment: s.identity.environment, profiles: [profile] });
+      const message = (await jobs.reserve(held.id))!; expect(await jobs.claim(message)).toBe(true);
+      const observer = vi.spyOn(transferObserver, 'observeTransferJob').mockResolvedValue(result);
+      const invoke = () => recordTransferJobFinality(env.WALLET_DB, s.identity.environment, message,
+        [profile], new AbortController().signal);
       const journal = () => env.WALLET_DB.prepare('SELECT * FROM transfer_finality_journal').all();
       if (fault === 'expired') {
         observer.mockResolvedValue({ ...result, finality_evidence: { ...result.finality_evidence, assessed_at: s.f.now - 5, expires_at: s.f.now } });
@@ -642,9 +645,9 @@ describe('V3 pre-delivery nonce reservation with real D1', () => {
       } else if (fault === 'wrong-operation') {
         observer.mockResolvedValue({ ...result, userop_hash: transaction });
         await expect(invoke()).rejects.toThrow();
-      } else if (fault === 'revoked') {
+      } else if (fault === 'lost-lease') {
         observer.mockImplementation(async () => {
-          await env.WALLET_DB.prepare('UPDATE users SET disabled_at = ? WHERE id = ?').bind(s.f.now + 1, s.session.user_id).run();
+          await env.WALLET_DB.prepare('UPDATE transfer_jobs SET lease_expires_at = 1 WHERE operation_id = ?').bind(held.id).run();
           return result;
         });
         await expect(invoke()).rejects.toThrow();
@@ -662,11 +665,8 @@ describe('V3 pre-delivery nonce reservation with real D1', () => {
           });
           vi.spyOn(finalityReader, 'assessCheckpointFinality').mockResolvedValue(fault === 'balance-reorg'
             ? { ...result.finality_evidence, status: 'reorg_detected', checkpoint: null, expires_at: s.f.now + 1 } : result.finality_evidence);
-          const check = () => observeTransferReconciliationBalance(env.WALLET_DB, s.identity, a.request.wallet_id, s.accountId,
-            held.id, undefined, [profile], new AbortController().signal);
+          const commit = () => reconcileTransferJob(env.WALLET_DB, s.identity.environment, message, [profile], new AbortController().signal);
           if (fault.startsWith('balance-commit')) {
-            const commit = () => reconcileOwnedTransfer(env.WALLET_DB, s.identity, a.request.wallet_id, s.accountId,
-              held.id, undefined, [profile], new AbortController().signal);
             await expect(env.WALLET_DB.prepare("UPDATE transfer_nonce_reservations SET state = 'reconciled' WHERE id = ?")
               .bind(held.id).run()).rejects.toThrow();
             if (fault !== 'balance-commit') {
@@ -678,7 +678,7 @@ describe('V3 pre-delivery nonce reservation with real D1', () => {
               expect((await env.WALLET_DB.prepare('SELECT * FROM transfer_reconciliations').all()).results).toHaveLength(0);
               expect((await env.WALLET_DB.prepare('SELECT * FROM wallet_balance_floors').all()).results).toEqual(before.results);
             } else {
-              expect(await commit()).toMatchObject({ reservation: 'reconciled', funds_reserved: false, send_enabled: false });
+              expect(await commit()).toMatchObject({ state: 'reconciled', funds_reserved: false });
               expect((await rows()).results[0].state).toBe('reconciled');
               expect(await env.WALLET_DB.prepare('SELECT * FROM transfer_jobs WHERE operation_id = ?').bind(held.id).first())
                 .toMatchObject({ state: 'reconciled', lease_token: null, lease_expires_at: null });
@@ -697,11 +697,7 @@ describe('V3 pre-delivery nonce reservation with real D1', () => {
               await expect(env.WALLET_DB.prepare('UPDATE transfer_reconciliations SET recorded_at = recorded_at + 1').run()).rejects.toThrow();
               return;
             }
-          } else if (fault === 'balance-current') {
-            const proof = await check(); expect(proof.release_enabled).toBe(false);
-            expect(proof.balances.balances[0].amount_atomic).toBe('9876');
-            expect(proof.receipt_sha256).toBe(saved.receipt_sha256);
-          } else await expect(check()).rejects.toThrow();
+          } else await expect(commit()).rejects.toThrow();
         }
         if (fault === 'concurrent') expect((await Promise.all([invoke(), invoke()])).map(r => r.journal)).toEqual(['recorded', 'recorded']);
         if (fault === 'conflict' || fault === 'concurrent-conflict') {
@@ -730,7 +726,7 @@ describe('V3 pre-delivery nonce reservation with real D1', () => {
         expect(status.funds_reserved).toBe(true); expect(status.settlement).toBe('not_assessed');
         await expect(env.WALLET_DB.prepare('UPDATE transfer_finality_journal SET recorded_at = recorded_at + 1').run()).rejects.toThrow();
       }
-      expect((await journal()).results).toHaveLength(['expired', 'revoked', 'wrong-operation'].includes(fault) ? 0 : 1);
+      expect((await journal()).results).toHaveLength(['expired', 'lost-lease', 'wrong-operation'].includes(fault) ? 0 : 1);
       expect((await rows()).results[0].state).toBe('delivery_pending');
     });
   it.each(['valid', 'missing', 'wrong-operation', 'zero-hash', 'invalid-envelope', 'rpc-error', 'oversized',

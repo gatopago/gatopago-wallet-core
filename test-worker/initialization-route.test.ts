@@ -6,7 +6,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import manifests from '@gatopago/environment/environments.json';
 import { parseEnvironment } from '@gatopago/environment';
 import { createResourceId } from '@gatopago/shared/v3/primitives';
-import { clientMutationHeaders, WALLET_RELEASE_POLICY } from '@gatopago/shared/v3/client-release';
+import { clientMutationHeaders } from '@gatopago/shared/v3/client-release';
 import { parseInitializationHistory, parseInitializationPreparation, parseInitializationRestoration } from '@gatopago/shared/v3/initialization-wire';
 import { createInitializationRoute } from '../src/creation/initializationRoute';
 import { WalletRepository } from '../src/accounts/repository';
@@ -14,11 +14,11 @@ import { initializationFixture } from '@gatopago/test-fixtures/v3-initialization
 import { fixtureHash } from '@gatopago/test-fixtures/v3-inspection';
 import { clearIdentityKeys, projectId, testIdentitySigner } from './identity.fixture';
 
-const initializationRoute = createInitializationRoute({ profiles: [], releasePolicy: WALLET_RELEASE_POLICY, async requireFreshDeployment() { throw new Error('Unexpected observer'); } });
+const initializationRoute = createInitializationRoute({ profiles: [], async requireFreshDeployment() { throw new Error('Unexpected observer'); } });
 
 const ROOT = '/app/v1/account-initializations';
 const now = () => Math.floor(Date.now() / 1000);
-const config = parseEnvironment({ ...manifests.staging, status: 'provisioned', firebase_project_id: projectId,
+const config = parseEnvironment({ ...manifests.production, status: 'provisioned', firebase_project_id: projectId,
 	wallet_enabled: ['eip155:84532'] });
 let signer: Awaited<ReturnType<typeof testIdentitySigner>>;
 let f: ReturnType<typeof initializationFixture>;
@@ -34,13 +34,13 @@ function proof(digest: `0x${string}`, options: Parameters<typeof f.assertion>[1]
 // Only the fresh deployment observer is stubbed in these HTTP tests. Profiles are
 // synthetic. JWT verification, P-256 typed signatures, ownership and D1 are real.
 function candidate(observe = vi.fn(async () => undefined)) {
-	const deps = { profiles: [{ ...f.pin, environment: 'staging' as const }],
-		releasePolicy: { ...WALLET_RELEASE_POLICY, account_profiles: [account()] }, requireFreshDeployment: observe };
+	const deps = { profiles: [{ ...f.pin, environment: 'production' as const }],
+		requireFreshDeployment: observe };
 	return { run: createInitializationRoute(deps), observe, deps };
 }
 async function request(path: string, body: unknown, user = 'test-user-a', method = 'POST') {
 	return new Request(`${config.api_origin}${path}`, { method, headers: { Origin: config.web_origin,
-		Authorization: `Bearer ${await signer.token({ sub: user })}`, 'Content-Type': 'application/json', ...clientMutationHeaders('staging', method === 'GET' ? undefined : account()) },
+		Authorization: `Bearer ${await signer.token({ sub: user })}`, 'Content-Type': 'application/json', ...clientMutationHeaders('production', method === 'GET' ? undefined : account()) },
 		...(method === 'POST' ? { body: JSON.stringify(body) } : {}) });
 }
 async function enroll(subject = 'test-user-a') {
@@ -116,7 +116,7 @@ describe('initialization HTTP consent, not account deployment', () => {
 	it('checks both header compatibility and the configured network, not just a profile hash', async () => {
 		const key = await enroll(), input = requestBody(key.id), c = candidate();
 		const identityHeaders = await request(ROOT, input);
-		for (const [key, value] of Object.entries(clientMutationHeaders('staging'))) identityHeaders.headers.set(key, value);
+		for (const [key, value] of Object.entries(clientMutationHeaders('production'))) identityHeaders.headers.set(key, value);
 		expect((await c.run(identityHeaders, env, config)).status).toBe(409);
 		expect((await c.run(await request(ROOT, input), env, { ...config, wallet_enabled: [] })).status).toBe(503);
 		expect((await c.run(await request(ROOT, { ...input, profile_sha256: fixtureHash('a') }), env, config)).status).toBe(503);
@@ -168,7 +168,7 @@ describe('initialization HTTP consent, not account deployment', () => {
 		const c = candidate(), body = requestBody(createResourceId('operation'));
 		expect((await c.run(await request(`${ROOT}/${body.request_id}/authorize`, body, 'test-user-a', 'GET'), env, config)).status).toBe(405);
 		expect((await c.run(await request(`${ROOT}?profile=other`, body), env, config)).status).toBe(404);
-		const foreign = await request(ROOT, body); foreign.headers.set('Origin', 'https://gatopago.com');
+		const foreign = await request(ROOT, body); foreign.headers.set('Origin', 'https://other.gatopago.com');
 		expect((await c.run(foreign, env, config)).status).toBe(403);
 		const preflight = await request(ROOT, {}, 'test-user-a', 'OPTIONS');
 		preflight.headers.set('Access-Control-Request-Method', 'POST'); preflight.headers.set('Access-Control-Request-Headers', 'authorization,content-type');
@@ -178,7 +178,7 @@ describe('initialization HTTP consent, not account deployment', () => {
 	});
 	it('bounds body size and detaches server-owned configuration before asynchronous requests', async () => {
 		const key = await enroll(), input = requestBody(key.id), c = candidate();
-		c.deps.profiles.length = 0; c.deps.releasePolicy.account_profiles.length = 0;
+		c.deps.profiles.length = 0;
 		expect((await c.run(await request(ROOT, { padding: 'a'.repeat(9000) }), env, config)).status).toBe(413);
 		expect((await c.run(await request(ROOT, input), env, config)).status).toBe(200);
 	});
@@ -286,7 +286,7 @@ describe('owned history and restoration after a new HTTP session', () => {
 		expect(second.data).toHaveLength(2); expect(second.next_cursor).toBeNull();
 		expect(new Set([...first.data, ...second.data].map((row) => row.initialization_id)).size).toBe(12);
 		const preflight = await request(`${ROOT}${path}`, null, 'test-user-a', 'OPTIONS');
-		preflight.headers.set('Access-Control-Request-Method', 'GET'); preflight.headers.set('Access-Control-Request-Headers', Object.keys(clientMutationHeaders('staging', account())).concat('authorization').join(','));
+		preflight.headers.set('Access-Control-Request-Method', 'GET'); preflight.headers.set('Access-Control-Request-Headers', Object.keys(clientMutationHeaders('production', account())).concat('authorization').join(','));
 		expect((await t.c.run(preflight, env, config)).status).toBe(200);
 		for (const query of ['?after=bad', `${path}&after=bad`, '?profile=bad']) expect((await t.c.run(await request(`${ROOT}${query}`, null, 'test-user-a', 'GET'), env, config)).status).toBeGreaterThanOrEqual(400);
 	});

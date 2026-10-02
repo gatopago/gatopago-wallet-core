@@ -1,6 +1,6 @@
 import { abortable } from '../deadline';
 import type { Environment } from '@gatopago/environment';
-import { CLIENT_RELEASE_HEADERS, type ReleasePolicy } from '@gatopago/shared/v3/client-release';
+import { CLIENT_RELEASE_HEADERS } from '@gatopago/shared/v3/client-release';
 import { deploymentDocumentDigest } from '@gatopago/shared/v3/deployment';
 import { loadPinnedCreationProfile } from '@gatopago/shared/v3/initialization';
 import { parseInitializationProof } from '@gatopago/shared/v3/initialization-wire';
@@ -10,7 +10,7 @@ import { validateIdentityConfig, type AuthBindings } from '../auth/config';
 import { IdentityError } from '../auth/identity';
 import { verifyAppSession } from '../auth/session';
 import type { ReceivingProfiles } from '../accounts/profile';
-import { requireCompatibleMutation } from '../clientCompatibility';
+import { requireCurrentProtocol } from '../clientProtocol';
 import { allowMethods, isJsonRequest, v3Json } from '../http';
 import { BackupError, BackupRepository, type BackupProfiles } from './backup';
 import { BackupStatusRepository } from './backupStatus';
@@ -31,10 +31,9 @@ export const isBackupPath = (path: string) => PATH.test(path) || STATUS_PATH.tes
 export function createBackupRoute(dependencies: {
   readonly accessProfiles?: ReceivingProfiles;
  readonly profiles: readonly (CreationProfilePin & { readonly environment: Environment['environment'] })[];
- readonly releasePolicy: ReleasePolicy;
  readonly resolveProfiles: BackupProfiles;
 }) {
- const policy = structuredClone(dependencies.releasePolicy), resolve = dependencies.resolveProfiles;
+ const resolve = dependencies.resolveProfiles;
  const profiles = dependencies.profiles.map((p) => {
   const deployment = loadPinnedCreationProfile(p.document, p.digest).deployment;
   return Object.freeze({ pin: Object.freeze({ document: p.document, digest: p.digest }), environment: p.environment,
@@ -61,7 +60,7 @@ export function createBackupRoute(dependencies: {
   const methodResponse = allowMethods(request, origin, methods, allowedHeaders);
   if (methodResponse) return methodResponse;
   const reading = request.method === 'GET';
-  const incompatible = requireCompatibleMutation(request, config, reading ? 'identity' : 'account', policy);
+  const incompatible = requireCurrentProtocol(request, config, reading ? 'identity' : 'account', profiles.map(p => p.deployment.manifest_id));
   if (incompatible) return incompatible;
   if (!reading && !isJsonRequest(request)) return respond(400, { error_code: 'INVALID_BACKUP_REQUEST' });
   const available = profiles.filter((p) => p.environment === config.environment && (reading ||

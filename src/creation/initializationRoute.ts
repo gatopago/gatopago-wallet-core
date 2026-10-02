@@ -1,5 +1,5 @@
 import type { Environment } from '@gatopago/environment';
-import { CLIENT_RELEASE_HEADERS, type ReleasePolicy } from '@gatopago/shared/v3/client-release';
+import { CLIENT_RELEASE_HEADERS } from '@gatopago/shared/v3/client-release';
 import { loadPinnedCreationProfile } from '@gatopago/shared/v3/initialization';
 import { parseInitializationCursor, parseInitializationProof, parseInitializationRequest } from '@gatopago/shared/v3/initialization-wire';
 import { parseResourceId } from '@gatopago/shared/v3/primitives';
@@ -8,7 +8,7 @@ import { validateIdentityConfig, type AuthBindings } from '../auth/config';
 import { IdentityError } from '../auth/identity';
 import { verifyAppSession } from '../auth/session';
 import type { ReceivingProfiles } from '../accounts/profile';
-import { requireCompatibleMutation } from '../clientCompatibility';
+import { requireCurrentProtocol } from '../clientProtocol';
 import { allowMethods, isJsonRequest, v3Json } from '../http';
 import { InitializationError, InitializationRepository, type CreationProfilePin } from './initialization';
 import { WalletAccessError, WalletRepository } from '../accounts/repository';
@@ -27,10 +27,8 @@ export function isInitializationPath(path: string) {
 export function createInitializationRoute(dependencies: {
   readonly accessProfiles?: ReceivingProfiles;
 	readonly profiles: readonly (CreationProfilePin & { readonly environment: Environment['environment'] })[];
-	readonly releasePolicy: ReleasePolicy;
 	readonly requireFreshDeployment: (profile: CreationProfilePin, signal: AbortSignal) => Promise<void>;
 }) {
-	const policy = structuredClone(dependencies.releasePolicy);
 	const profiles = dependencies.profiles.map((p) => {
 		const pin = Object.freeze({ document: p.document, digest: p.digest });
 		return Object.freeze({ pin, environment: p.environment, deployment: loadPinnedCreationProfile(pin.document, pin.digest).deployment });
@@ -57,7 +55,7 @@ export function createInitializationRoute(dependencies: {
 		const methodResponse = allowMethods(request, origin, methods, headers);
 		if (methodResponse) return methodResponse;
 		const reading = request.method === 'GET';
-		const incompatible = requireCompatibleMutation(request, config, reading ? 'identity' : 'account', policy);
+		const incompatible = requireCurrentProtocol(request, config, reading ? 'identity' : 'account', profiles.map(p => p.deployment.manifest_id));
 		if (incompatible) return incompatible;
 		if (!reading && !isJsonRequest(request)) return respond(400, { error_code: 'INVALID_INITIALIZATION' });
 		const available = profiles.filter((p) => p.environment === config.environment && config.wallet_enabled.includes(p.deployment.network_id)

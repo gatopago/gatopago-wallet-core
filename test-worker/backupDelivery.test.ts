@@ -178,9 +178,7 @@ describe('durable backup delivery, actual D1 and cryptographic proofs', { timeou
  });
  it('rejects another environment, missing profiles, wrong RP and unbounded sweeps', async () => {
   const f = await authorized();
-  const other = new BackupDeliveryRepository(env.WALLET_DB, { ...f.configuration, environment: 'production' as const });
-  expect(await other.due()).toEqual([]); await expect(other.claim(f.r.id)).rejects.toMatchObject({ code: 'NOT_FOUND' });
-  await expect(other.observationGrant(f.r.id)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  expect(() => new BackupDeliveryRepository(env.WALLET_DB, { ...f.configuration, environment: 'unsupported' as never })).toThrow();
   await expect(new BackupDeliveryRepository(env.WALLET_DB, { ...f.configuration, profiles: [] }).claim(f.r.id)).rejects.toMatchObject({ code: 'PROFILE_UNAVAILABLE' });
   await expect(new BackupDeliveryRepository(env.WALLET_DB, { ...f.configuration, scope: { rpId: 'example.org', origin: 'https://example.org' } }).claim(f.r.id)).rejects.toThrow();
   for (const n of [0,51,1.5,NaN]) await expect(f.repo().due(n)).rejects.toThrow();
