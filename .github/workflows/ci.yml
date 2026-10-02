@@ -9,10 +9,10 @@ jobs:
     timeout-minutes: 30
     env:
       CI: "true"
-      GATOPAGO_ENVIRONMENT: staging
-      GATOPAGO_WEB_ORIGIN: https://staging.gatopago.com
-      GATOPAGO_API_ORIGIN: https://api.staging.gatopago.com
-      GATOPAGO_BUSINESS_ORIGIN: https://business.staging.gatopago.com
+      GATOPAGO_ENVIRONMENT: production
+      GATOPAGO_WEB_ORIGIN: https://gatopago.com
+      GATOPAGO_API_ORIGIN: https://api.gatopago.com
+      GATOPAGO_BUSINESS_ORIGIN: https://business.gatopago.com
       GATOPAGO_WALLET_NETWORKS: eip155:421614
       FIREBASE_PROJECT_ID: v3-build-test
       GATOPAGO_FIREBASE_WEB_API_KEY: AIzaxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx

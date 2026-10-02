@@ -10,7 +10,7 @@
   "preview_urls": false,
   "vars": {
     "CREATION_QUEUE_NAME": "gatopago-wallet-v3-creation-local",
-    "GATOPAGO_ENVIRONMENT": "staging",
+    "GATOPAGO_ENVIRONMENT": "production",
     "FIREBASE_PROJECT_ID": "unprovisioned",
     "AUTH_IP_REQUESTS_PER_HOUR": "120",
     "AUTH_GLOBAL_REQUESTS_PER_HOUR": "2000",
