@@ -11,7 +11,7 @@ const reserved = new Set(['gatopago', 'admin', 'administrator', 'support', 'sopo
 export function registrationProfile(name: unknown, handle: unknown) {
   if (typeof name !== 'string' || typeof handle !== 'string') throw new RegistrationError('INVALID_REGISTRATION');
   const displayName = normalizeDisplayName(name), username = handle.trim().toLowerCase();
-  if (!/^[a-z][a-z0-9_]{4,29}$/.test(username)) throw new RegistrationError('INVALID_REGISTRATION');
+  if (!/^[a-z][a-z0-9_]{2,29}$/.test(username)) throw new RegistrationError('INVALID_REGISTRATION');
   if (reserved.has(username)) throw new RegistrationError('USERNAME_UNAVAILABLE');
   return { displayName, username };
 }

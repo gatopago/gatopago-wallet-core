@@ -18,6 +18,14 @@ import type { CreationProfilePin } from '../creation/initialization';
 import { configureWalletNetworks, maximumGasCharge } from './config';
 import { networkFinality, requireFreshCreationDeployment } from './finality';
 import { recoverSelfSubmissions } from '../execution/operationTransport';
+import application from '../../config/application.json';
+import aaveMarket from '../../config/markets/aave-v3-arbitrum-sepolia-usdc.json';
+import { configureMoney } from './moneyConfig';
+import { createMoneyReadRoute } from '../money/moneyReadRoute';
+import { createMoneyRoute } from '../money/moneyRoute';
+import { createMoneyJobHandlers } from '../money/moneyJobHandlers';
+import type { MoneyDeliveryProfile } from '../money/moneyPreflight';
+import moneyGas from '../../config/money-gas.json';
 
 type Owned = Awaited<ReturnType<WalletRepository['ownedAccount']>>;
 
@@ -61,6 +69,15 @@ export function createWalletRuntime(env: WalletCoreV3Bindings, environment: Envi
     networks: networks.map(n => ({ ...n, delivery: n.backup })) }));
   const transfer = createTransferJobHandlers(() => ({ environment: environment.environment,
     profiles: networks.map(n => n.transferProfile) }));
+  let moneyConfiguration: ReturnType<typeof configureMoney> | null = null;
+  try { moneyConfiguration = configureMoney(application, aaveMarket, networks, moneyGas); }
+  catch { /* Monetary admission is isolated from existing identity/transfer routes. */ }
+  const moneyProfiles: readonly (MoneyDeliveryProfile & { environment: Environment['environment'] })[] = moneyConfiguration ? [{
+    ...moneyConfiguration.network.transferProfile, market: moneyConfiguration.market,
+    features: moneyConfiguration.application.features,
+    gasByKind: moneyConfiguration.gasByKind,
+  }] : [];
+  const money = createMoneyJobHandlers(() => ({ environment: environment.environment, profiles: moneyProfiles }));
   return {
     accountProfiles,
     accountContextProfiles: networks.map(n => ({ document: n.transferProfile.document, digest: n.transferProfile.digest,
@@ -70,7 +87,7 @@ export function createWalletRuntime(env: WalletCoreV3Bindings, environment: Envi
       relayer_address: n.transport.kind === 'self' ? n.transport.policy.operator : null })),
     capabilities: { creation: networks.length > 0, transfers: networks.length > 0,
       backup: networks.length > 0 && networks.every(n => !!n.backup) },
-    jobs: { creation, backup, transfer },
+    jobs: { creation, backup, transfer, money },
     async recoverRelay(database: D1Database) {
       const results = await Promise.allSettled(networks.map(async network => {
         if (network.transport.kind === 'self') {
@@ -122,6 +139,19 @@ export function createWalletRuntime(env: WalletCoreV3Bindings, environment: Envi
           observed_at: now, expires_at: Math.min(now + 60, evidence.expires_at) } };
       } }),
     receivingProfiles,
+    money: createMoneyRoute({ profiles: moneyProfiles, accessProfiles: receivingProfiles,
+      relayerKey: env.PRIVATE_KEY as `0x${string}` | undefined,
+      async resolvePreparation(owned, profile, signal) {
+        const network = forAccount(owned);
+        if (profile.digest !== network.transferProfile.digest || !moneyConfiguration || moneyConfiguration.network !== network) throw new Error('MONEY_PROFILE_UNAVAILABLE');
+        return networkFinality(network, signal);
+      } }),
+    moneyRead: createMoneyReadRoute({ configuration: moneyConfiguration, accessProfiles: receivingProfiles,
+      async resolveProfiles(owned, signal) {
+        const network = forAccount(owned);
+        if (!moneyConfiguration || moneyConfiguration.network !== network) throw new Error('POSITION_PROFILE_UNAVAILABLE');
+        return [{ ...network.transferProfile, market: moneyConfiguration.market, finalityEvidence: await networkFinality(network, signal) }];
+      } }),
     async balanceProfiles(owned: Owned, signal: AbortSignal) {
       const network = forAccount(owned);
       return [{ ...network.transferProfile, finalityEvidence: await networkFinality(network, signal) }];

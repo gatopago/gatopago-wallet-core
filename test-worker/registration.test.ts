@@ -1,7 +1,6 @@
 import { env } from 'cloudflare:workers';
 import { applyD1Migrations } from 'cloudflare:test';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { invitationHash } from '../src/auth/invitations';
 import { issueInvitation } from './invitations.fixture';
 import { createResourceId } from '@gatopago/shared/v3/primitives';
 import { RegistrationRepository } from '../src/auth/registration';
@@ -31,12 +30,27 @@ afterEach(async () => {
 });
 
 describe('invitation admission with real WebAuthn and transactional D1', () => {
-  it('stores only the invitation hash; preparing does not admit or reserve a username', async () => {
+  it('stores the operator code as text; preparing does not admit or reserve a username', async () => {
     const issued = await invite(); await prepare('daniel', issued.token);
     expect(await counts()).toEqual([0, 0, 0]);
     const saved = await env.WALLET_DB.prepare('SELECT * FROM signup_invites').first();
-    expect(saved).toMatchObject({ token_hash: invitationHash(issued.token), consumed_by: null });
-    expect(JSON.stringify(saved)).not.toContain(issued.token);
+    expect(saved).toMatchObject({ code: issued.token, consumed_by: null });
+    expect(saved).not.toHaveProperty('token_hash');
+  });
+  it.each(['123', 'daniel', 'team1', 'hello world', "O'Brien", 'café 🐈', ' padded ', 'x'.repeat(120)])('registers with an exact operator-defined code %s', async code => {
+      await issueInvitation(env.WALLET_DB, 'daniel', now() + 3600, code);
+      const prepared = await prepare('daniel', code);
+      const user = await repo().complete(prepared.request_id, credential(prepared));
+      expect(await env.WALLET_DB.prepare('SELECT code,consumed_by FROM signup_invites WHERE code = ?')
+        .bind(code).first()).toEqual({ code, consumed_by: user.userId });
+      await expect(prepare('second', code)).rejects.toThrow('INVITE_UNAVAILABLE');
+    });
+  it('does not trim, change case or interpret SQL in a code', async () => {
+    await issueInvitation(env.WALLET_DB, 'daniel', now() + 3600, 'daniel');
+    for (const code of ['DANIEL', ' daniel ', "' OR 1=1 --"]) {
+      await expect(prepare('daniel', code)).rejects.toThrow('INVITE_UNAVAILABLE');
+    }
+    expect(await env.WALLET_DB.prepare('SELECT count(*) AS n FROM auth_challenges').first('n')).toBe(0);
   });
   it('consumes admission, challenge and proof together and uses the internal ID as Firebase UID', async () => {
     const p = await prepare(), result = await repo().complete(p.request_id, credential(p));
@@ -47,6 +61,12 @@ describe('invitation admission with real WebAuthn and transactional D1', () => {
       user_id: result.userId, login_enabled: 1, access_version: 1 });
     await expect(repo().complete(p.request_id, credential(p))).rejects.toThrow('CHALLENGE_UNAVAILABLE');
     expect(await counts()).toEqual([1, 1, 1]);
+  });
+  it.each(['ana', 'leo', 'dani', 'a'.repeat(30)])('completes registration with the supported username %s', async username => {
+    const prepared = await prepare(username);
+    const user = await repo().complete(prepared.request_id, credential(prepared));
+    expect(await env.WALLET_DB.prepare('SELECT username FROM users WHERE id = ?')
+      .bind(user.userId).first('username')).toBe(username);
   });
   it('allows exactly one of two simultaneous registrations using the same invitation', async () => {
     const { token } = await invite();
@@ -136,12 +156,12 @@ describe('invitation admission with real WebAuthn and transactional D1', () => {
     const future = now() + 90001;
     await pruneAuthChallenges(env.WALLET_DB, future);
     expect(await env.WALLET_DB.prepare('SELECT count(*) AS n FROM auth_challenges').first('n')).toBe(3);
-    expect(await env.WALLET_DB.prepare('SELECT token_hash FROM signup_invites WHERE token_hash = ?').bind(invitationHash(token)).first()).not.toBeNull();
+    expect(await env.WALLET_DB.prepare('SELECT code FROM signup_invites WHERE code = ?').bind(token).first()).not.toBeNull();
     expect(await counts()).toEqual([1, 1, 1]);
     expect(await env.WALLET_DB.prepare('SELECT username FROM users WHERE id = ?').bind(first.userId).first('username')).toBeNull();
     await pruneAuthChallenges(env.WALLET_DB, future);
     expect(await env.WALLET_DB.prepare('SELECT count(*) AS n FROM auth_challenges').first('n')).toBe(0);
-    expect(await env.WALLET_DB.prepare('SELECT token_hash FROM signup_invites WHERE token_hash = ?').bind(invitationHash(token)).first()).toBeNull();
+    expect(await env.WALLET_DB.prepare('SELECT code FROM signup_invites WHERE code = ?').bind(token).first()).toBeNull();
     expect(await counts()).toEqual([1, 1, 1]);
   });
   it('purges old enrollment challenges without resetting the daily limit or removing credentials', async () => {
@@ -157,7 +177,7 @@ describe('invitation admission with real WebAuthn and transactional D1', () => {
     expect(await counts()).toEqual([1, 1, 1]);
   });
   it('rejects invalid and system usernames before creating any challenges', async () => {
-    for (const username of ['admin', 'support', 'gatopago', 'abc', 'dáñiel', 'daniel/', '_daniel']) {
+    for (const username of ['admin', 'support', 'gatopago', 'a', 'ab', 'a'.repeat(31), 'dáñiel', 'daniel/', '_daniel']) {
       await expect(prepare(username)).rejects.toThrow();
     }
     expect(await env.WALLET_DB.prepare('SELECT count(*) AS n FROM auth_challenges').first('n')).toBe(0);

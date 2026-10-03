@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "network_id": "eip155:421614",
+  "account_profile": "account-v3-arbitrum-sepolia",
+  "money_schema_version": 1,
+  "features": {
+    "aave_supply": false,
+    "aave_withdraw": false,
+    "aave_withdraw_and_pay": false
+  },
+  "markets": ["aave-v3-arbitrum-sepolia-usdc"]
+}

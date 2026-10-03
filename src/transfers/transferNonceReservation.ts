@@ -9,14 +9,7 @@ import { WalletRepository } from '../accounts/repository';
 import { readTransferOperationRecord, writeTransferOperationRecord } from './transferOperationRecord';
 import { readTransferFunds, writeTransferFunds } from './transferFundsRecord';
 import { readTransferReview, writeTransferDraft, writeTransferReview } from '@gatopago/shared/v3/transfer-review-record';
-
-// Compare canonical decimal strings by length then lexically; never SQLite REAL
-// or signed-64-bit casts. Included in each monetary write, not just a prior read.
-const BALANCE_FLOOR_CURRENT = `NOT EXISTS (SELECT 1 FROM wallet_balance_floors f WHERE f.wallet_account_id = ?
-  AND (length(f.block_number) > length(?) OR (length(f.block_number) = length(?) AND f.block_number > ?)
-    OR (f.block_number = ? AND f.block_hash != ?)))`;
-const floorValues = (id: ResourceId<'walletAccount'>, checkpoint: { block_number: string; block_hash: Hex }) =>
-  [id, checkpoint.block_number, checkpoint.block_number, checkpoint.block_number, checkpoint.block_number, checkpoint.block_hash];
+import { BALANCE_FLOOR_CURRENT, floorValues } from '../execution/spendCheckpoint';
 
 /** Request-owned primary D1 session. A claim is NOT signature verification
  * or a send grant. Holds only coordinate this service, not external spending.
@@ -255,7 +248,10 @@ export class TransferNonceReservationRepository {
           accountId, now, snapshot.fingerprint),
       this.db.prepare(`SELECT id,state,expires_at,userop_hash,deployment_manifest_sha256,operation_json,operation_sha256 FROM transfer_nonce_reservations
         WHERE wallet_account_id = ? AND consent_digest = ?`).bind(accountId, a.digest),
-    ]);
+    ]).catch(error => {
+      if (error instanceof Error && /ACCOUNT_SPEND_BUSY/.test(error.message)) throw new Error('ACCOUNT_SPEND_BUSY');
+      throw error;
+    });
     if (results.some(r => !r.success)) throw new Error('TRANSFER_RESERVATION_FAILED');
     // Recheck session/ownership after a concurrent revocation before exposing even a claim locator.
     const current = await this.owner(walletId, accountId);

@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "network_id", "account_profile", "money_schema_version", "features", "markets"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "network_id": { "const": "eip155:421614" },
+    "account_profile": { "const": "account-v3-arbitrum-sepolia" },
+    "money_schema_version": { "const": 1 },
+    "features": {
+      "type": "object", "additionalProperties": false,
+      "required": ["aave_supply", "aave_withdraw", "aave_withdraw_and_pay"],
+      "properties": {
+        "aave_supply": { "type": "boolean" },
+        "aave_withdraw": { "type": "boolean" },
+        "aave_withdraw_and_pay": { "type": "boolean" }
+      }
+    },
+    "markets": { "type": "array", "minItems": 1, "maxItems": 1, "uniqueItems": true,
+      "items": { "const": "aave-v3-arbitrum-sepolia-usdc" } }
+  }
+}

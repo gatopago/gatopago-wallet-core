@@ -3,11 +3,11 @@ import { bytesToHex, hexToBytes, sha256, stringToHex, type Hex } from 'viem';
 import { createResourceId, parseResourceId, type ResourceId } from '@gatopago/shared/v3/primitives';
 import { assertWebAuthnScope, type WebAuthnScope } from '@gatopago/shared/v3/webauthn';
 import { base64url, verifyEnrollment } from '../enrollment/verification';
-import { invitationHash } from './invitations';
+import { invitationCode } from './invitations';
 import { registrationProfile, RegistrationError } from './profile';
 
 type Challenge = {
-  id: ResourceId<'operation'>; proposed_user_id: ResourceId<'user'>; invite_hash: Hex;
+  id: ResourceId<'operation'>; proposed_user_id: ResourceId<'user'>; invite_code: string;
   challenge: Hex; proof_challenge: Hex; display_name: string; username: string;
   created_at: number; expires_at: number; consumed_at: number | null;
 };
@@ -23,14 +23,14 @@ export class RegistrationRepository {
 
   async prepare(input: { invite: unknown; name: unknown; username: unknown }) {
     const { displayName, username } = registrationProfile(input.name, input.username);
-    const hash = invitationHash(input.invite), now = nowSeconds();
+    const code = invitationCode(input.invite), now = nowSeconds();
     const id = createResourceId('operation'), userId = createResourceId('user');
     const random = () => bytesToHex(crypto.getRandomValues(new Uint8Array(32)));
     const result = await this.db.prepare(`INSERT INTO auth_challenges
-      (id,purpose,challenge,proof_challenge,rp_id,origin,proposed_user_id,invite_hash,display_name,username,created_at,expires_at)
+      (id,purpose,challenge,proof_challenge,rp_id,origin,proposed_user_id,invite_code,display_name,username,created_at,expires_at)
       SELECT ?,'register',?,?,?,?,?,?,?,?,?,? FROM signup_invites
-      WHERE token_hash = ? AND revoked_at IS NULL AND consumed_by IS NULL AND expires_at > ? AND expires_at > unixepoch()`)
-      .bind(id, random(), random(), this.scope.rpId, this.scope.origin, userId, hash, displayName, username, now, now + 300, hash, now).run();
+      WHERE code = ? AND revoked_at IS NULL AND consumed_by IS NULL AND expires_at > ? AND expires_at > unixepoch()`)
+      .bind(id, random(), random(), this.scope.rpId, this.scope.origin, userId, code, displayName, username, now, now + 300, code, now).run();
     if (result.meta.changes !== 1) throw new RegistrationError('INVITE_UNAVAILABLE');
     const attempt = await this.read(id);
     return { request_id: id, expires_at: attempt.expires_at, scope: this.scope, proof_challenge: attempt.proof_challenge,
@@ -68,7 +68,7 @@ export class RegistrationRepository {
         this.db.prepare(`INSERT INTO users
           (id,environment,display_name,username,username_reserved_until,created_at)
           SELECT c.proposed_user_id,?,c.display_name,c.username,?,? FROM auth_challenges c
-          JOIN signup_invites i ON i.token_hash = c.invite_hash
+          JOIN signup_invites i ON i.code = c.invite_code
           WHERE c.id = ? AND c.consumed_at IS NULL AND c.expires_at > ?
           AND c.expires_at > unixepoch() AND i.expires_at > unixepoch()
           AND i.revoked_at IS NULL AND i.consumed_by IS NULL AND i.expires_at > ?`)
@@ -82,10 +82,10 @@ export class RegistrationRepository {
         this.db.prepare(`UPDATE auth_challenges SET consumed_at = ? WHERE id = ? AND consumed_at IS NULL
           AND EXISTS (SELECT 1 FROM webauthn_credentials WHERE id = ? AND user_id = ? AND response_hash = ?)`)
           .bind(now, id, id, userId, proof.responseHash),
-        this.db.prepare(`UPDATE signup_invites SET consumed_by = ?, consumed_at = ? WHERE token_hash = ?
+        this.db.prepare(`UPDATE signup_invites SET consumed_by = ?, consumed_at = ? WHERE code = ?
           AND consumed_by IS NULL AND revoked_at IS NULL AND expires_at > ?
           AND EXISTS (SELECT 1 FROM webauthn_credentials WHERE id = ? AND user_id = ? AND response_hash = ?)`)
-          .bind(userId, now, attempt.invite_hash, now, id, userId, proof.responseHash),
+          .bind(userId, now, attempt.invite_code, now, id, userId, proof.responseHash),
       ]);
       if (result.slice(1).some((write) => write.meta.changes !== 1)) return unavailable();
       return { userId, credentialRef: id, accessVersion: 1 };

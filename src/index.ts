@@ -10,6 +10,8 @@ import { isCreationOperationPath } from './creation/creationOperationRoute';
 import { dispatchWalletJobs } from './execution/walletJobHandlers';
 import { isBackupPath } from './security/backupRoute';
 import { isTransferCommandPath } from './transfers/transferRoute';
+import { isMoneyReadPath } from './money/moneyReadRoute';
+import { isMoneyCommandPath } from './money/moneyRoute';
 import { pruneAuthChallenges } from './auth/retention';
 import { pruneLimits } from './auth/limits';
 import { parseResourceId } from '@gatopago/shared/v3/primitives';
@@ -24,7 +26,7 @@ export function createWalletWorker(configuration?: unknown, environment = config
       await Promise.all([pruneAuthChallenges(env.WALLET_DB), pruneLimits(env.WALLET_DB, Math.floor(Date.now() / 1000))]);
       const config = environment(env);
       const { jobs, recoverRelay } = createWalletRuntime(env, config, configuration ?? catalog(config));
-      const results = await Promise.allSettled([recoverRelay(env.WALLET_DB), jobs.creation.wake(env), jobs.backup.wake(env), jobs.transfer.wake(env)]);
+      const results = await Promise.allSettled([recoverRelay(env.WALLET_DB), jobs.creation.wake(env), jobs.backup.wake(env), jobs.transfer.wake(env), jobs.money.wake(env)]);
       if (results.some((result) => result.status === 'rejected')) throw new Error('WALLET_SCHEDULER_FAILED');
     },
     async queue(batch: MessageBatch<unknown>, env: WalletCoreV3Bindings): Promise<void> {
@@ -36,7 +38,7 @@ export function createWalletWorker(configuration?: unknown, environment = config
       const path = new URL(request.url).pathname;
       if (path === '/app/v1/health/live') return Response.json({ service: 'gatopago-wallet-core', status: 'ok' },
         { headers: { 'Cache-Control': 'no-store' } });
-      if (path !== '/app/v1/health/ready' && !isProfilePath(path) && !isAuthPath(path) && path !== CLIENT_COMPATIBILITY_PATH && !isWalletReadPath(path) && !isEnrollmentPath(path) && !isInitializationPath(path) && !isCreationOperationPath(path) && !isBackupPath(path) && !isTransferCommandPath(path)) return Response.json({ error_code: 'NOT_FOUND' },
+      if (path !== '/app/v1/health/ready' && !isProfilePath(path) && !isAuthPath(path) && path !== CLIENT_COMPATIBILITY_PATH && !isWalletReadPath(path) && !isEnrollmentPath(path) && !isInitializationPath(path) && !isCreationOperationPath(path) && !isBackupPath(path) && !isTransferCommandPath(path) && !isMoneyReadPath(path) && !isMoneyCommandPath(path)) return Response.json({ error_code: 'NOT_FOUND' },
         { status: 404, headers: { 'Cache-Control': 'no-store' } });
       try {
         const config = environment(env);
@@ -55,6 +57,14 @@ export function createWalletWorker(configuration?: unknown, environment = config
           (owned, signal) => walletRuntime().receivingProfiles(owned, signal),
           () => walletRuntime().accountContextProfiles);
         const resolved = walletRuntime();
+        if (isMoneyReadPath(path)) return await resolved.moneyRead(request, env, config);
+        if (isMoneyCommandPath(path)) {
+          const response = await resolved.money(request, env, config);
+          if (ctx && response.ok && request.method === 'POST' && path.endsWith('/deliver')) ctx.waitUntil(resolved.jobs.money.wake(env).catch(() => {
+            console.warn({ event: 'v3_money_wake_failed' });
+          }));
+          return response;
+        }
         if (path === '/app/v1/health/ready') return Response.json({ service: 'gatopago-wallet-core', configured: resolved.configured,
           capabilities: resolved.capabilities, networks: resolved.networks },
           { status: resolved.configured ? 200 : 503, headers: { 'Cache-Control': 'no-store' } });

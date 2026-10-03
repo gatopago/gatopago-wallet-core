@@ -19,6 +19,31 @@ export async function verifyHuman(env: AuthBindings, config: Environment, token:
     // Test keys return canned metadata, not the widget's hostname/action.
     return record(data) && data.success === true;
   }
-  return record(data) && data.success === true && data.action === 'signup' &&
-    data.hostname === new URL(config.web_origin).hostname;
+  const result = record(data) ? data : {};
+  const success = result.success === true;
+  const actionMatches = result.action === 'signup';
+  const hostnameMatches = result.hostname === new URL(config.web_origin).hostname;
+  const accepted = success && actionMatches && hostnameMatches;
+
+  if (!accepted) {
+    const errors = Array.isArray(result['error-codes']) ? result['error-codes'] : [];
+    // Log only known codes and comparison results, never provider/request payloads.
+    console.warn({
+      event: 'turnstile_verification_failed',
+      success,
+      action_matches: actionMatches,
+      hostname_matches: hostnameMatches,
+      error_codes: [
+        'missing-input-secret',
+        'invalid-input-secret',
+        'missing-input-response',
+        'invalid-input-response',
+        'bad-request',
+        'timeout-or-duplicate',
+        'internal-error',
+      ].filter(code => errors.includes(code)),
+    });
+  }
+
+  return accepted;
 }

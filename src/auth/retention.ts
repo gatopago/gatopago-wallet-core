@@ -13,9 +13,9 @@ export async function pruneAuthChallenges(database: D1Database, now = Math.floor
       (SELECT id FROM webauthn_enrollments WHERE created_at < ? ORDER BY created_at LIMIT 256)`).bind(now - 86400),
     // Keep consumed admission history. A remaining challenge can still reference
     // an expired invite when the bounded challenge batch has not caught up yet.
-    database.prepare(`DELETE FROM signup_invites WHERE token_hash IN
-      (SELECT i.token_hash FROM signup_invites i WHERE i.consumed_by IS NULL AND i.expires_at <= ?
-        AND NOT EXISTS (SELECT 1 FROM auth_challenges c WHERE c.invite_hash = i.token_hash)
+    database.prepare(`DELETE FROM signup_invites WHERE code IN
+      (SELECT i.code FROM signup_invites i WHERE i.consumed_by IS NULL AND i.expires_at <= ?
+        AND NOT EXISTS (SELECT 1 FROM auth_challenges c WHERE c.invite_code = i.code)
         ORDER BY i.expires_at LIMIT 256)`).bind(now - 86400),
   ]);
 }

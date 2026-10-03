@@ -68,7 +68,9 @@ describe('public passkey authentication boundary', () => {
     expect(await env.WALLET_DB.prepare('SELECT count(*) AS n FROM users').first('n')).toBe(0);
   });
   it.each([{ Origin: 'https://evil.test' }, { Origin: 'null' }])('rejects an invalid origin before providers or quotas', async headers => {
-    expect((await run(request('register/options', await signup(), headers))).status).toBe(403);
+    const response = await run(request('register/options', await signup(), headers));
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error_code: 'ORIGIN_NOT_ALLOWED' });
     expect(fetch).not.toHaveBeenCalled();
     expect(await env.WALLET_DB.prepare('SELECT count(*) AS n FROM auth_limits').first('n')).toBe(0);
   });
@@ -78,7 +80,9 @@ describe('public passkey authentication boundary', () => {
   });
   it.each([{ success: false }, { action: 'email_login' }, { hostname: 'evil.test' }])('requires the expected Turnstile action and hostname', async fields => {
     human(fields);
-    expect((await run(request('register/options', await signup()))).status).toBe(403);
+    const response = await run(request('register/options', await signup()));
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error_code: 'HUMAN_VERIFY_FAILED' });
     expect(await env.WALLET_DB.prepare('SELECT count(*) AS n FROM auth_challenges').first('n')).toBe(0);
   });
   it('does not consume invitation or create a challenge on a provider failure', async () => {
@@ -90,7 +94,9 @@ describe('public passkey authentication boundary', () => {
   it('rejects oversized bodies and missing edge IP, ignoring X-Forwarded-For', async () => {
     expect((await run(request('login/options', { filler: 'x'.repeat(25000) }))).status).toBe(413);
     const req = request('login/options', {}, { 'X-Forwarded-For': '192.0.2.3' }); req.headers.delete('CF-Connecting-IP');
-    expect((await run(req)).status).toBe(403);
+    const response = await run(req);
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error_code: 'CLIENT_IP_UNAVAILABLE' });
   });
   it('requires a compatible client before creating challenges', async () => {
     const req = request('login/options');

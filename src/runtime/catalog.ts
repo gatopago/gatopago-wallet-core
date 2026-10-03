@@ -19,7 +19,11 @@ export const arbitrumSepolia = {
   assets: { 'eip155:421614/slip44:60': { symbol: 'ETH', decimals: 18 },
     'eip155:421614/erc20:0x75faf114eafb1bdbe2f0316df893fd58ce46aa4d': { symbol: 'USDC', decimals: 6 } },
   // Caps for signed-operation estimation; exact signed-operation simulation remains a live check.
-  creationGas: { verificationGasLimit: '496000', callGasLimit: '100000', preVerificationGas: '150000',
+  // Native P256 creation rejected 496k with AA13 on both RPCs; 750k passed
+  // exact handleOps eth_call with synthetic prefunding. This is the self
+  // transport ceiling, not public bundler admission or a completed creation.
+  // Existing prepared operations retain their separately stored signed terms.
+  creationGas: { verificationGasLimit: '750000', callGasLimit: '100000', preVerificationGas: '150000',
     maxFeePerGas: '100000000', maxPriorityFeePerGas: '0' },
   transferGas: { verificationGasLimit: '496000', callGasLimit: '150000', preVerificationGas: '100000',
     maxFeePerGas: '100000000', maxPriorityFeePerGas: '0' },

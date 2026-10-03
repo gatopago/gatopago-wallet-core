@@ -948,17 +948,20 @@ describe('V3 pre-delivery nonce reservation with real D1', () => {
     await expect(s.repository().deliveryFundsSnapshot(a.request.wallet_id, s.accountId, held.id)).rejects.toThrow();
     const reserved = [{ asset_id: a.request.asset_id, amount_atomic: '1010' }];
     await expect(s.repository().reserve(s.accountId, await s.signed('20', s.f.now + 30, { nonce: 0n, reserved })))
-      .rejects.toThrow('TRANSFER_RESERVATION_CONCURRENT_CHANGE');
-    await s.repository().reserve(s.accountId, await s.signed('20', s.f.now + 30, { nonce: 1n, reserved }));
+      .rejects.toThrow('ACCOUNT_SPEND_BUSY');
+    await expect(s.repository().reserve(s.accountId, await s.signed('20', s.f.now + 30, { nonce: 1n, reserved })))
+      .rejects.toThrow('ACCOUNT_SPEND_BUSY');
     expect((await s.repository().readOwned(a.request.wallet_id, s.accountId, held.id)).state).toBe('delivery_pending');
     expect(await s.repository().reservedFunds(a.request.wallet_id, s.accountId, [a.request.asset_id]))
-      .toEqual([{ asset_id: a.request.asset_id, amount_atomic: '2030' }]);
+      .toEqual([{ asset_id: a.request.asset_id, amount_atomic: '1010' }]);
   });
-  it('rejects a delivery claim if another reservation changed the funds snapshot', async () => {
+  it('blocks a second active spend and rejects a changed funds fingerprint', async () => {
     const s = await setup(), a = await s.signed(), held = await s.repository().reserve(s.accountId, a);
     const proof = await deliveryProof(s, a, held.id);
     const reserved = await s.repository().reservedFunds(a.request.wallet_id, s.accountId, [a.request.asset_id]);
-    await s.repository().reserve(s.accountId, await s.signed('20', undefined, { nonce: 1n, reserved }));
+    await expect(s.repository().reserve(s.accountId, await s.signed('20', undefined, { nonce: 1n, reserved })))
+      .rejects.toThrow('ACCOUNT_SPEND_BUSY');
+    proof.reservation_fingerprint += ',changed';
     await expect(s.repository().beginDelivery(a.request.wallet_id, s.accountId, proof)).rejects.toThrow('TRANSFER_DELIVERY_CONCURRENT_CHANGE');
     expect((await rows()).results.every(r => r.state === 'held')).toBe(true);
   });
@@ -1054,11 +1057,11 @@ describe('V3 pre-delivery nonce reservation with real D1', () => {
     const held = await s.repository().reserve(s.accountId, a);
     const reserved = await s.repository().reservedFunds(s.f.request.wallet_id, s.accountId, [s.f.request.asset_id]);
     const b = await s.signed('20', undefined, { nonce: 1n, reserved });
-    await s.repository().reserve(s.accountId, b);
+    await expect(s.repository().reserve(s.accountId, b)).rejects.toThrow('ACCOUNT_SPEND_BUSY');
     const before = await rows();
     const snapshot = await s.repository().deliveryFundsSnapshot(s.f.request.wallet_id, s.accountId, held.id);
     expect(snapshot.own_funds).toEqual(a.funding_reservation);
-    expect(snapshot.total_reserved).toEqual([{ asset_id: s.f.request.asset_id, amount_atomic: '2030' }]);
+    expect(snapshot.total_reserved).toEqual([{ asset_id: s.f.request.asset_id, amount_atomic: '1010' }]);
     expect(snapshot.fingerprint).toContain(held.id);
     expect(snapshot.send_enabled).toBe(false);
     expect(snapshot.expires_at).toBe(s.f.now + 6);
@@ -1075,10 +1078,10 @@ describe('V3 pre-delivery nonce reservation with real D1', () => {
     const held = await s.repository().reservedFunds(s.f.request.wallet_id, s.accountId, [s.f.request.asset_id]);
     expect(held).toEqual([{ asset_id: s.f.request.asset_id, amount_atomic: '7000' }]);
     const fresh = await s.signed('2000', undefined, { nonce: 2n, reserved: held });
-    await expect(s.repository().reserve(s.accountId, fresh)).resolves.toMatchObject({ state: 'held' });
+    await expect(s.repository().reserve(s.accountId, fresh)).rejects.toThrow('ACCOUNT_SPEND_BUSY');
     expect(await s.repository().reservedFunds(s.f.request.wallet_id, s.accountId, [s.f.request.asset_id]))
-      .toEqual([{ asset_id: s.f.request.asset_id, amount_atomic: '10000' }]);
-    expect((await rows()).results).toHaveLength(2);
+      .toEqual([{ asset_id: s.f.request.asset_id, amount_atomic: '7000' }]);
+    expect((await rows()).results).toHaveLength(1);
   });
   it('requires a fresh quote after another hold, rather than silently reducing the transfer', async () => {
     const s = await setup(), a = await s.signed(), stale = await s.signed('10', undefined, { nonce: 1n });

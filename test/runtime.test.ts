@@ -1,10 +1,30 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
-import { configureWalletNetworks } from '../src/runtime/config';
+import { configureWalletNetworks, maximumGasCharge } from '../src/runtime/config';
+import reviewedCatalog from '../src/runtime/catalog';
+import { ARBITRUM_SEPOLIA_CREATION } from '@gatopago/shared/v3/wallet-release';
 import { runtimeFixture } from './runtime.fixture';
 import { finalityPin, finalityPolicyFixture } from '@gatopago/test-fixtures/v3-finality';
 
 describe('reviewed Wallet Core runtime configuration', () => {
+  it('composes the corrected native-P256 creation ceiling within the self-transport budget', () => {
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-10-02T17:00:00Z'));
+    try {
+      const f = runtimeFixture(ARBITRUM_SEPOLIA_CREATION);
+      const bindings = { ...f.bindings, PRIVATE_KEY: `0x${'12'.repeat(32)}`,
+        WALLET_RPC_ENDPOINTS: JSON.stringify({ arbitrum_sepolia_offchain: 'https://offchain.invalid/',
+          arbitrum_sepolia_tenderly: 'https://tenderly.invalid/' }) };
+      const [network] = configureWalletNetworks(reviewedCatalog(f.environment), f.environment, bindings);
+      expect(network.creationGas.verificationGasLimit).toBeGreaterThan(496000n);
+      expect(maximumGasCharge(network.creationGas)).toBe(100000000000000n);
+      expect(network.transferGas.verificationGasLimit).toBe(496000n);
+      expect(network.transport.kind).toBe('self');
+      if (network.transport.kind !== 'self') throw new Error('Expected the reviewed self transport');
+      expect(network.creationGas.verificationGasLimit + network.creationGas.callGasLimit
+        + network.creationGas.preVerificationGas).toBeLessThan(network.transport.policy.maxGas);
+      expect(maximumGasCharge(network.creationGas)).toBeLessThan(network.transport.policy.maxExecutionFee);
+    } finally { clock.mockRestore(); }
+  });
   it('resolves only named secrets and keeps contract pins independent of endpoint credentials', () => {
     const f = runtimeFixture(), [network] = configureWalletNetworks(f.catalog, f.environment, f.bindings);
     expect(network.providers.map(p => p.url)).toEqual(['https://observer-a.invalid/', 'https://observer-b.invalid/']);

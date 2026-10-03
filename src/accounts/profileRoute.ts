@@ -14,7 +14,7 @@ import { WalletAccessError } from './repository';
 import { ProfileError, ProfileRepository, resolveRecipient, type ReceivingProfiles } from './profile';
 
 type Bindings = AuthBindings & Pick<WalletCoreV3Bindings, 'PUBLIC_LOOKUP_IP_REQUESTS_PER_HOUR' | 'PUBLIC_LOOKUP_GLOBAL_REQUESTS_PER_HOUR'>;
-const PROFILE = '/app/v1/profile', PUBLISH = `${PROFILE}/username`, RECIPIENT = /^\/app\/v1\/recipients\/([a-z][a-z0-9_]{4,29})$/;
+const PROFILE = '/app/v1/profile', PUBLISH = `${PROFILE}/username`, RECIPIENT = /^\/app\/v1\/recipients\/([a-z][a-z0-9_]{2,29})$/;
 export const isProfilePath = (path: string) => path === PROFILE || path === PUBLISH || RECIPIENT.test(path);
 const headers = ['Authorization', 'Content-Type', ...Object.values(CLIENT_RELEASE_HEADERS)];
 function object(value: unknown, keys: string[]) {

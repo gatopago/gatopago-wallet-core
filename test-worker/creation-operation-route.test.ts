@@ -17,6 +17,7 @@ import { clearIdentityKeys, projectId, testIdentitySigner } from './identity.fix
 import { createWalletRuntime } from '../src/runtime';
 import { runtimeFixture } from '../test/runtime.fixture';
 import * as runtimeFinality from '../src/runtime/finality';
+import { arbitrumSepolia } from '../src/runtime/catalog';
 
 const creationOperationRoute = createCreationOperationRoute({ profiles: [], async requireFreshDeployment() { throw new Error('Unexpected observer'); }, async quoteGas() { throw new Error('Unexpected quote'); } });
 
@@ -70,6 +71,26 @@ beforeEach(async () => {
 afterEach(async () => { vi.restoreAllMocks(); vi.unstubAllGlobals(); await env.WALLET_DB.exec('DROP TRIGGER IF EXISTS creation_http_outbox_fail;'); });
 
 describe('first creation operation HTTP boundary (synthetic quote/observer, real JWT/P256/D1)', () => {
+  it('restores and authorizes the exact earlier review after the runtime creation ceiling changes', async () => {
+    const t = await start(), settings = runtimeFixture(f.pin);
+    settings.network.creationGas = { ...arbitrumSepolia.creationGas, verificationGasLimit: '496000' };
+    const observe = vi.spyOn(runtimeFinality, 'requireFreshCreationDeployment').mockResolvedValue(undefined);
+    const initialRuntime = createWalletRuntime({ ...env, ...settings.bindings }, config, settings.catalog);
+    const first = parseCreationPreview(await (await initialRuntime.creationOperation(
+      await request(path(t.id), {}), env, config)).json(), t.consent);
+    expect(first.terms.verificationGasLimit).toBe(496000n);
+    expect(first.terms.maximumGasCharge).toBe(74600000000000n);
+    settings.network.creationGas = { ...arbitrumSepolia.creationGas };
+    const updatedRuntime = createWalletRuntime({ ...env, ...settings.bindings }, config, settings.catalog);
+    const restored = parseCreationPreview(await (await updatedRuntime.creationOperation(
+      await request(path(t.id), {}), env, config)).json(), t.consent);
+    expect(restored.terms).toEqual(first.terms);
+    expect(restored.candidate).toEqual(first.candidate);
+    expect(observe).toHaveBeenCalledOnce();
+    expect((await updatedRuntime.creationOperation(await request(`${path(t.id)}/authorize`,
+      proof(first.candidate.digest)), env, config)).status).toBe(200);
+    expect((await queued()).results).toHaveLength(1);
+  });
   it('prepares automatic server terms and restores exact saved bytes without repricing after a lost response', async () => {
     const t = await start(), c = candidate(), ceiling = vi.fn(async () => gas().maximumGasCharge);
     const route = createCreationOperationRoute({ ...c.deps, automaticGasCap: ceiling });

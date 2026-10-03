@@ -4,6 +4,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import { createResourceId } from '@gatopago/shared/v3/primitives';
 import { WalletRepository } from '../src/accounts/repository';
 import { ProfileRepository, resolveRecipient, type ReceivingProfiles } from '../src/accounts/profile';
+import { isProfilePath } from '../src/accounts/profileRoute';
 import { backupScenario } from './backup.fixture';
 import { cleanCreationDelivery } from './creationDelivery.fixture';
 import { testPrincipal } from './principal.fixture';
@@ -51,6 +52,15 @@ describe('Username publication and resolution on real D1 and two synthetic RPCs'
     expect(f.fetch.mock.calls.some(([url]) => String(url) === 'https://observer-a.invalid/')).toBe(true);
     expect(f.fetch.mock.calls.some(([url]) => String(url) === 'https://observer-b.invalid/')).toBe(true);
     await expect(resolveRecipient(env.WALLET_DB, f.configuration.scope, 'daniel', 'eip155:1', f.profiles, signal())).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+  it('publishes and resolves a three-character username through the supported recipient path', async () => {
+    const f = await setup();
+    expect(isProfilePath('/app/v1/recipients/ana')).toBe(true);
+    expect(isProfilePath('/app/v1/recipients/an')).toBe(false);
+    expect(isProfilePath(`/app/v1/recipients/${'a'.repeat(31)}`)).toBe(false);
+    expect(await f.repo.publish({ ...f.input, username: 'ana' }, signal())).toHaveProperty('username', 'ana');
+    expect(await resolveRecipient(env.WALLET_DB, f.configuration.scope, 'ana', f.prepared.profile.deployment.network_id, f.profiles, signal()))
+      .toMatchObject({ username: 'ana', address: f.prepared.account.toLowerCase() });
   });
   it('does not turn an unfinished creation into a receiving address', async () => {
     const f = await setup(); f.state.creationUntil = BigInt(Math.floor(Date.now() / 1000) + 100);

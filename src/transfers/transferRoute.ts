@@ -146,7 +146,7 @@ export function createTransferRoute(dependencies: {
       if (error instanceof IdentityError) return respond(error.code === 'UNAUTHENTICATED' ? 401 : 503, { error_code: error.code });
       if (error instanceof WalletAccessError) return respond({ UNAUTHENTICATED: 401, SESSION_REQUIRED: 409, NOT_FOUND: 404, WALLET_DATA_INVALID: 503 }[error.code], { error_code: error.code });
       const code = error instanceof Error ? error.message : '';
-      const known: Record<string, number> = { SPONSOR_BUDGET_EXHAUSTED: 429, TRANSFER_PREPARATION_NOT_FOUND: 404, TRANSFER_RESERVATION_NOT_FOUND: 404,
+      const known: Record<string, number> = { ACCOUNT_SPEND_BUSY: 409, SPONSOR_BUDGET_EXHAUSTED: 429, TRANSFER_PREPARATION_NOT_FOUND: 404, TRANSFER_RESERVATION_NOT_FOUND: 404,
         TRANSFER_PREPARATION_EXPIRED: 410, TRANSFER_CONSENT_EXPIRED: 410, TRANSFER_REVIEW_MISMATCH: 409,
         TRANSFER_FUNDS_CHANGED: 409, TRANSFER_CONFIRMATION_CHANGED: 409, TRANSFER_PREPARATION_CHANGED: 409,
         TRANSFER_RESERVATION_CONCURRENT_CHANGE: 409, TRANSFER_RESERVATION_CONFLICT: 409, TRANSFER_DELIVERY_ALREADY_CLAIMED: 409,

@@ -1,4 +1,4 @@
-import { encodeFunctionData, isAddress, keccak256, zeroAddress, type Address, type Hex } from 'viem';
+import { encodeFunctionData, isAddress, keccak256, parseTransaction, zeroAddress, type Address, type Hex } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { entryPoint09Abi, formatUserOperationRequest, getUserOperationHash, toPackedUserOperation, type UserOperation } from 'viem/account-abstraction';
 import { discardResponseBody, readJsonBounded } from '@gatopago/shared/http';
@@ -34,9 +34,9 @@ async function rpc(url: string, method: string, params: readonly unknown[], sign
     || !('id' in result) || result.id !== 1 || !('result' in result) || 'error' in result) throw new Error('TRANSPORT_RESPONSE');
   return result.result;
 }
-function validate(input: TransportOperation) {
+function validate(input: TransportOperation, live = true) {
   requireHash(input.userOpHash);
-  if (!Number.isSafeInteger(input.validUntil) || input.validUntil <= Math.floor(Date.now() / 1000)) throw new Error('TRANSPORT_EXPIRED');
+  if (!Number.isSafeInteger(input.validUntil) || input.validUntil <= 0 || (live && input.validUntil <= Math.floor(Date.now() / 1000))) throw new Error('TRANSPORT_EXPIRED');
   const chainId = Number(evmChainId(input.networkId));
   if (!Number.isSafeInteger(chainId) || input.operation.authorization
     || getUserOperationHash({ userOperation: input.operation, chainId, entryPointAddress: input.entryPoint,
@@ -160,6 +160,30 @@ export async function resumeSubmission(database: D1Database, hash: Hex, signal: 
       if (BigInt(stored.nonce) >= consumed) await broadcast(stored, signal);
     } catch { signal.throwIfAborted(); }
   }
+}
+/** Private historical proof, never a broadcast grant. Reconstruct the exact
+ * one-UserOp envelope and recover its signer before trusting a reverted outer
+ * receipt. A bundler locator does not identify a private signed envelope. */
+export async function verifiedSelfSubmission(database: D1Database, input: TransportOperation, signal: AbortSignal) {
+  validate(input, false); signal.throwIfAborted();
+  const stored = await read(database, input.userOpHash);
+  if (!stored || stored.kind !== 'self') return null;
+  if (stored.payload_hash !== keccak256(calldata(input, zeroAddress)) || stored.network_id !== input.networkId
+    || stored.valid_until !== input.validUntil || !stored.raw_transaction || !stored.transaction_hash
+    || !stored.operator || !isAddress(stored.operator, { strict: false }) || !Number.isSafeInteger(stored.nonce)) throw new Error('TRANSPORT_SUBMISSION_CONFLICT');
+  const tx = parseTransaction(stored.raw_transaction);
+  if (tx.type !== 'eip1559' || tx.nonce !== stored.nonce || !tx.gas || !tx.maxFeePerGas) throw new Error('TRANSPORT_SUBMISSION_CONFLICT');
+  const priority = tx.maxPriorityFeePerGas ?? 0n;
+  const expected = prepareBackupTransaction(input.networkId,
+    { account: input.entryPoint, value: 0n, data: calldata(input, stored.operator) },
+    { networkId: input.networkId, operator: stored.operator, maxGas: tx.gas, maxFeePerGas: tx.maxFeePerGas,
+      maxPriorityFeePerGas: priority, maxExecutionFee: tx.gas * tx.maxFeePerGas },
+    { nonce: tx.nonce, gas: tx.gas, maxFeePerGas: tx.maxFeePerGas, maxPriorityFeePerGas: priority });
+  const verified = await verifyBackupTransaction(expected, stored.raw_transaction);
+  signal.throwIfAborted();
+  if (verified.hash !== stored.transaction_hash) throw new Error('TRANSPORT_SUBMISSION_CONFLICT');
+  return Object.freeze({ transaction_hash: verified.hash, operator: expected.operator, nonce: tx.nonce,
+    gas: tx.gas, max_fee_per_gas: tx.maxFeePerGas });
 }
 
 /** Private Cron transport recovery, independent of a domain job's timeout/review.
