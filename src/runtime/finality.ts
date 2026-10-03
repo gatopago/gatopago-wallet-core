@@ -5,8 +5,8 @@ import type { WalletNetwork } from './config';
 
 /** Select a common finalized block, then independently validate its chain, age and
  * ancestry with both observers. All evidence is scoped to this invocation. */
-export async function networkFinality(network: Pick<WalletNetwork, 'providers' | 'deployment' | 'finalityPolicy'>, signal: AbortSignal) {
-  const clients = network.providers.map(p => createInspectionClient(p.url, signal));
+export async function networkFinality(network: Pick<WalletNetwork, 'providers' | 'deployment' | 'finalityPolicy'>, signal: AbortSignal, batch = false) {
+  const clients = network.providers.map(p => createInspectionClient(p.url, signal, batch));
   const results = await Promise.allSettled(clients.map(client => client.request({
     method: 'eth_getBlockByNumber', params: ['finalized', false],
   }, { retryCount: 0, dedupe: false })));
@@ -28,7 +28,7 @@ export async function networkFinality(network: Pick<WalletNetwork, 'providers' |
 }
 
 export async function requireFreshCreationDeployment(network: WalletNetwork, signal: AbortSignal) {
-  const evidence = await networkFinality(network, signal), checkpoint = evidence.checkpoint!;
+  const evidence = await networkFinality(network, signal, true), checkpoint = evidence.checkpoint!;
   const results = await Promise.allSettled(network.providers.map(p => inspectWalletCreationProfile({ document: network.document,
     expectedDigest: network.digest, checkpoint }, p.url, signal)));
   signal.throwIfAborted();

@@ -19,8 +19,8 @@
     "build": "wrangler deploy --dry-run --outdir .wrangler/build"
   },
   "dependencies": {
-    "@gatopago/environment": "file:vendor/gatopago-environment-3.2.1.tgz",
-    "@gatopago/shared": "file:vendor/gatopago-shared-3.2.1.tgz",
+    "@gatopago/environment": "file:vendor/gatopago-environment-3.2.2.tgz",
+    "@gatopago/shared": "file:vendor/gatopago-shared-3.2.2.tgz",
     "@simplewebauthn/server": "13.3.2",
     "jose": "^6.2.10",
     "viem": "2.55.19"
@@ -29,7 +29,7 @@
     "@cloudflare/vitest-pool-workers": "0.22.0",
     "@eslint/js": "^10.0.1",
     "@gatopago/contract-artifacts": "file:vendor/gatopago-contract-artifacts-3.1.0.tgz",
-    "@gatopago/test-fixtures": "file:vendor/gatopago-test-fixtures-3.2.1.tgz",
+    "@gatopago/test-fixtures": "file:vendor/gatopago-test-fixtures-3.2.2.tgz",
     "@types/node": "^24.13.3",
     "eslint": "^10.9.0",
     "globals": "^17.11.0",

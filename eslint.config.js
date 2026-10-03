@@ -6,7 +6,7 @@ import { defineConfig, globalIgnores } from "eslint/config";
 export default defineConfig([
 	globalIgnores(["node_modules", "worker-configuration.d.ts", ".wrangler"]),
 	{
-		files: ["*.js", "scripts/**/*.mjs"],
+		files: ["*.js"],
 		extends: [js.configs.recommended],
 		languageOptions: { globals: globals.node },
 	},

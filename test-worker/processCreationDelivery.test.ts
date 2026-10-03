@@ -10,6 +10,7 @@ import { processCreationDelivery } from '../src/creation/processCreationDelivery
 import { creationInspectionScenario } from '@gatopago/test-fixtures/v3-creation-inspection';
 import { fixtureAddress, fixtureHash } from '@gatopago/test-fixtures/v3-inspection';
 import { cleanCreationDelivery, creationGas, deliveryNow, deliveryOutbox, seedCreationDelivery } from './creationDelivery.fixture';
+import { rpcReply } from '../test/rpc.fixture';
 
 type Rpc = { jsonrpc: string; id: number; method: string; params: readonly unknown[] };
 async function scenario() {
@@ -30,10 +31,13 @@ async function scenario() {
 	const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
 		init?.signal?.throwIfAborted();
 		if (typeof init?.body !== 'string') throw new Error('Expected RPC body');
+		if (String(url) === 'https://inspection.invalid/') return rpcReply(init, async request => {
+			calls.push({ url: String(url), request: { ...request, jsonrpc: '2.0' } });
+			return inspection.request(request);
+		});
 		const request: Rpc = JSON.parse(init.body);
 		calls.push({ url: String(url), request });
 		expect(init.method).toBe('POST'); expect(init.redirect).toBe('manual'); expect(init.signal).toBeInstanceOf(AbortSignal);
-		if (String(url) === 'https://inspection.invalid/') return Response.json({ jsonrpc: '2.0', id: request.id, result: await inspection.request(request) });
 		if (String(url) === 'https://bundler.invalid/') return envelope(request, await bundler(request));
 		throw new Error('Unexpected network destination');
 	});

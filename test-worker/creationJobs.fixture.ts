@@ -10,6 +10,7 @@ import { creationInspectionScenario } from '@gatopago/test-fixtures/v3-creation-
 import { creationReceiptScenario } from '@gatopago/test-fixtures/v3-creation-receipt';
 import { finalityPin, finalityPolicyFixture } from '@gatopago/test-fixtures/v3-finality';
 import { creationGas, deliveryNow, seedCreationDelivery } from './creationDelivery.fixture';
+import { rpcReply } from '../test/rpc.fixture';
 
 /** Full private pipeline, real D1 and ephemeral P256 grants; synthetic RPC evidence. */
 export async function creationJobsScenario() {
@@ -44,6 +45,10 @@ export async function creationJobsScenario() {
 	});
 	const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
 		init?.signal?.throwIfAborted();
+		if (String(url) !== 'https://bundler.invalid/') {
+			if (!configuration.networks[0].providers.some((p) => p.url === String(url))) throw new Error('Unexpected provider');
+			return rpcReply(init, request => state.sent ? reply(request.method, request.params) : inspection.request(request));
+		}
 		const request = JSON.parse(String(init?.body)) as { id: number; method: string; params: readonly unknown[] };
 		let result: unknown;
 		if (String(url) === 'https://bundler.invalid/') {

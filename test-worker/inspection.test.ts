@@ -7,6 +7,7 @@ import { initializationFixture } from '@gatopago/test-fixtures/v3-initialization
 import { prepareInitialization } from '@gatopago/shared/v3/initialization';
 import { authorizeCreationOperation, prepareCreationOperation } from '@gatopago/shared/v3/creation-operation';
 import { getUserOperationHash } from 'viem/account-abstraction';
+import { rpcReply } from '../test/rpc.fixture';
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 const endpoint = 'https://rpc.example.test/private-fixture-key';
@@ -35,33 +36,34 @@ describe('V3 original creation composition in workerd', () => {
 		const test = creationInspectionScenario();
 		const ids: number[] = [];
 		const fetchMock = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
-			const body = JSON.parse(String(init?.body)) as { id: number; method: string; params?: readonly unknown[] };
+			return rpcReply(init, async body => {
 			ids.push(body.id);
 			expect(init?.redirect).toBe('manual');
 			expect(init?.signal).toBeInstanceOf(AbortSignal);
 			if (body.method === 'eth_getCode' || body.method === 'eth_call') {
 				expect(body.params?.[1]).toEqual({ blockHash: test.input.checkpoint.block_hash, requireCanonical: true });
 			}
-			return Response.json({ jsonrpc: '2.0', id: body.id, result: await test.request(body) });
+			return test.request(body);
+			});
 		});
 		vi.stubGlobal('fetch', fetchMock);
 		expect(await inspectWalletCreationProfile(test.input, endpoint, freshSignal())).toMatchObject({
 			status: 'composition_matches', network_admitted: false,
 		});
 		expect(ids).toEqual(Array.from({ length: 29 }, (_, i) => i + 1));
+		expect(fetchMock).toHaveBeenCalledTimes(6);
 	});
 	it('does not reuse a successful inspection when the provider fails later', async () => {
 		const test = creationInspectionScenario();
 		const fetchMock = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
-			const body = JSON.parse(String(init?.body)) as { id: number; method: string; params?: readonly unknown[] };
-			return Response.json({ jsonrpc: '2.0', id: body.id, result: await test.request(body) });
+			return rpcReply(init, body => test.request(body));
 		});
 		vi.stubGlobal('fetch', fetchMock);
 		await inspectWalletCreationProfile(test.input, endpoint, freshSignal());
 		fetchMock.mockImplementationOnce(async () => Response.json({ jsonrpc: '2.0', id: 1,
 			error: { message: 'private upstream diagnostics must not escape' } }));
 		await expect(inspectWalletCreationProfile(test.input, endpoint, freshSignal())).rejects.toMatchObject({ message: 'RPC_UNAVAILABLE' });
-		expect(fetchMock).toHaveBeenCalledTimes(30);
+		expect(fetchMock).toHaveBeenCalledTimes(7);
 	});
 	it('releases an unfinished body when creation inspection is cancelled', async () => {
 		let cancelled = false;
