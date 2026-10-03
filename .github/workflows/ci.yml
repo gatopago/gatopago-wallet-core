@@ -25,5 +25,9 @@ jobs:
         with:
           version: v1.7.1
       - run: pnpm install --frozen-lockfile
-      - run: pnpm verify
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm test:worker
+      - run: pnpm build
       - run: pnpm audit --prod
