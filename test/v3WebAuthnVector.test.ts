@@ -2,10 +2,23 @@ import { createHash, createPublicKey, verify } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-const fixture = JSON.parse(readFileSync(new URL(import.meta.resolve('@gatopago/shared/fixtures/v3-webauthn-chromium.json')), 'utf8')) as {
-  challenge: string; rpId: string; origin: string; spki: string; algorithm: number;
-  authenticatorData: string; clientDataJSON: string; signatureDER: string;
-  r: string; sRaw: string; sNormalized: string;
+const fixture = JSON.parse(
+  readFileSync(
+    new URL(import.meta.resolve('@gatopago/shared/fixtures/v3-webauthn-chromium.json')),
+    'utf8',
+  ),
+) as {
+  challenge: string;
+  rpId: string;
+  origin: string;
+  spki: string;
+  algorithm: number;
+  authenticatorData: string;
+  clientDataJSON: string;
+  signatureDER: string;
+  r: string;
+  sRaw: string;
+  sNormalized: string;
 };
 const bytes = (hex: string) => Buffer.from(hex.slice(2), 'hex');
 const sha256 = (data: string | Buffer) => createHash('sha256').update(data).digest();
@@ -14,7 +27,10 @@ const order = 0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551
 describe('V3 public Chromium WebAuthn assertion', () => {
   it('independently verifies the original DER signature using Node/OpenSSL', () => {
     const key = createPublicKey({ key: bytes(fixture.spki), format: 'der', type: 'spki' });
-    const payload = Buffer.concat([bytes(fixture.authenticatorData), sha256(fixture.clientDataJSON)]);
+    const payload = Buffer.concat([
+      bytes(fixture.authenticatorData),
+      sha256(fixture.clientDataJSON),
+    ]);
     expect(fixture.algorithm).toBe(-7);
     expect(key.asymmetricKeyDetails?.namedCurve).toBe('prime256v1');
     expect(verify('sha256', payload, key, bytes(fixture.signatureDER))).toBe(true);
@@ -24,8 +40,12 @@ describe('V3 public Chromium WebAuthn assertion', () => {
 
   it('binds the exact browser origin, RP, challenge and UV without inventing a credential', () => {
     const client = JSON.parse(fixture.clientDataJSON) as Record<string, unknown>;
-    expect(client).toEqual({ type: 'webauthn.get', challenge: bytes(fixture.challenge).toString('base64url'),
-      origin: fixture.origin, crossOrigin: false });
+    expect(client).toEqual({
+      type: 'webauthn.get',
+      challenge: bytes(fixture.challenge).toString('base64url'),
+      origin: fixture.origin,
+      crossOrigin: false,
+    });
     expect(bytes(fixture.authenticatorData).subarray(0, 32)).toEqual(sha256(fixture.rpId));
     expect(bytes(fixture.authenticatorData)[32] & 5).toBe(5);
   });

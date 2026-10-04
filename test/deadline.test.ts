@@ -14,7 +14,12 @@ describe('provider cancellation', () => {
     const controller = new AbortController();
     const remove = vi.spyOn(controller.signal, 'removeEventListener');
     let rejectProvider!: (reason: unknown) => void;
-    const pending = abortable(new Promise<never>((_, reject) => { rejectProvider = reject; }), controller.signal);
+    const pending = abortable(
+      new Promise<never>((_, reject) => {
+        rejectProvider = reject;
+      }),
+      controller.signal,
+    );
     const rejected = expect(pending).rejects.toThrow('canceled');
     controller.abort(new Error('canceled'));
     await rejected;
@@ -24,20 +29,26 @@ describe('provider cancellation', () => {
   });
 
   it('rejects an already canceled operation even if its result is available', async () => {
-    await expect(abortable(Promise.resolve('stale'), AbortSignal.abort(new Error('expired')))).rejects.toThrow('expired');
+    await expect(
+      abortable(Promise.resolve('stale'), AbortSignal.abort(new Error('expired'))),
+    ).rejects.toThrow('expired');
   });
 
   it('clears a completed deadline without aborting the provider afterward', async () => {
     vi.useFakeTimers();
     try {
       let providerSignal!: AbortSignal;
-      await expect(withDeadline(new AbortController().signal, 1000, async signal => {
-        providerSignal = signal;
-        return 'done';
-      })).resolves.toBe('done');
+      await expect(
+        withDeadline(new AbortController().signal, 1000, async (signal) => {
+          providerSignal = signal;
+          return 'done';
+        }),
+      ).resolves.toBe('done');
       expect(vi.getTimerCount()).toBe(0);
       await vi.advanceTimersByTimeAsync(1000);
       expect(providerSignal.aborted).toBe(false);
-    } finally { vi.useRealTimers(); }
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

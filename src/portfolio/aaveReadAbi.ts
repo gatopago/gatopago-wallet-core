@@ -6,4 +6,6 @@ export const aavePositionExtraAbi = parseAbi([
   'function getReserveNormalizedIncome(address asset) view returns (uint256)',
   'function scaledTotalSupply() view returns (uint256)',
 ]);
-export const aaveReadAbiDigest = deploymentDocumentDigest(JSON.stringify([aavePoolAbi, aaveProviderAbi, aaveTokenAbi, erc20Abi, aavePositionExtraAbi]));
+export const aaveReadAbiDigest = deploymentDocumentDigest(
+  JSON.stringify([aavePoolAbi, aaveProviderAbi, aaveTokenAbi, erc20Abi, aavePositionExtraAbi]),
+);

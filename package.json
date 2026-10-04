@@ -14,6 +14,7 @@
     "cf-typegen": "wrangler types --env-interface WalletCoreV3Bindings --strict-vars false",
     "typecheck": "tsc --noEmit && tsc --noEmit --project test-worker/tsconfig.json",
     "lint": "eslint .",
+    "format": "prettier --write .",
     "test": "vitest run --config vitest.config.ts",
     "test:worker": "vitest run --config vitest.worker.config.ts",
     "build": "wrangler deploy --dry-run --outdir .wrangler/build"

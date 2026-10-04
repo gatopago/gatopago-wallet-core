@@ -9,5 +9,12 @@ export const AUTHORIZED_USER = `u.environment = ? AND u.id = ?
     AND login_key.revoked_at IS NULL AND login_key.access_version = ?)`;
 
 export function authorizationValues(identity: Principal) {
-  return [identity.environment, identity.userId, identity.authTime, identity.expiresAt, identity.credentialRef, identity.accessVersion] as const;
+  return [
+    identity.environment,
+    identity.userId,
+    identity.authTime,
+    identity.expiresAt,
+    identity.credentialRef,
+    identity.accessVersion,
+  ] as const;
 }
