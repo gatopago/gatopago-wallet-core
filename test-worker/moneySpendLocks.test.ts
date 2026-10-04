@@ -8,8 +8,6 @@ import { prepareInitialization } from '@gatopago/shared/v3/initialization';
 import { seedUser } from './user.fixture';
 import { testPrincipal } from './principal.fixture';
 
-// These rows are deliberately SQL fixtures, not proof of cryptographic consent.
-// The production coordinator must verify the complete signed review before insert.
 beforeAll(() => applyD1Migrations(env.WALLET_DB, env.V3_TEST_MIGRATIONS));
 beforeEach(async () => {
   await env.WALLET_DB
@@ -229,7 +227,7 @@ describe('Cross-domain spend exclusivity in real workerd/D1', () => {
         .bind(operation.id)
         .run(),
     ).rejects.toThrow();
-    // A conflicting historical observation is retained; it is not rewritten.
+
     await expect(
       env.WALLET_DB.prepare(
         "UPDATE money_expirations SET observed_nonce = '0' WHERE operation_id = ?",

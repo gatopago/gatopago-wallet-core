@@ -349,7 +349,7 @@ describe('durable creation observation journal and service in real D1', () => {
       const valid = await f.journal().latest(f.id);
       if (!valid || valid.result.status !== 'observed')
         throw new Error('Expected observed evidence');
-      // Deliberately simulate malformed deserialized input, not a typed RPC attestation.
+
       const bad = JSON.parse(JSON.stringify(valid.result));
       if (fault === 'amount') bad.observation.actual_gas_cost = '-1';
       if (fault === 'time') bad.observation.block_timestamp = '0';
@@ -487,7 +487,7 @@ describe('durable creation observation journal and service in real D1', () => {
         f.configuration.networks[0].finalityPolicy = finalityPin(policy);
       }
       expect(await f.run()).toBe('observed');
-      // The altered individual anchor is a reorg contradiction, not a usable quorum.
+
       expect(await f.journal().latest(f.id)).toMatchObject({
         result: {
           finality: fault === 'anchor_changed' ? 'reorg_detected' : fault,

@@ -42,7 +42,7 @@ export function createWalletRuntime(
     signal: AbortSignal,
   ) => {
     if (!network.paymaster) return undefined;
-    const key = env.WALLET_PAYMASTER_SIGNER_KEY;
+    const key = env.PRIVATE_KEY;
     if (!key || !/^0x[0-9a-fA-F]{64}$/.test(key)) throw new Error('SPONSOR_CONFIGURATION_INVALID');
     return createGasSponsor(
       database,

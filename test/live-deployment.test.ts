@@ -5,7 +5,6 @@ import { arbitrumSepolia } from '../src/runtime/catalog';
 import { requireFreshCreationDeployment } from '../src/runtime/finality';
 import { validateRpcProviders } from '../src/chainProviders';
 
-// Explicit read-only testnet inspection. Normal unit/CI runs never depend on public RPCs.
 it.runIf(process.env.V3_LIVE_RPC === '1')(
   'reads the deployed V3 composition through both production RPC adapters',
   async () => {

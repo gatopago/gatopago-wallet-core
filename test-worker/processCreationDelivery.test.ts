@@ -391,7 +391,7 @@ describe('exact first UserOperation transport with D1 send boundary', () => {
     'never broadcasts when persisting the send boundary returns %s',
     async (failure) => {
       const f = await scenario();
-      // These are fixed test literals, not SQL built from user data.
+
       const action =
         failure === 'IGNORE' ? 'RAISE(IGNORE)' : "RAISE(ABORT, 'synthetic send-marker failure')";
       await env.WALLET_DB.prepare(

@@ -50,7 +50,7 @@ const commit: UpgradeCommit = {
   validAfter: 300_000,
   validUntil: 400_000,
 };
-// Encoding fixtures, not valid cryptographic signatures. Solidity tests use real quorum signatures.
+
 const votes = [
   { signerIndex: 0, signature: '0x1234' as Hex },
   { signerIndex: 1, signature: '0x5678' as Hex },

@@ -2,7 +2,6 @@ import { initializationFixture } from '@gatopago/test-fixtures/v3-initialization
 import type { Principal } from '../src/auth/principal';
 import { WalletRepository } from '../src/accounts/repository';
 
-/** Tests seed an admitted user directly; public session reads never create users. */
 export async function seedUser(database: D1Database, identity: Principal) {
   await database
     .prepare(

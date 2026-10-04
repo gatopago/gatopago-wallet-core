@@ -112,8 +112,7 @@ describe('recent finalized security → authenticated account inspection', () =>
     const policy = finalityPolicyFixture(f.source, f.now);
     policy.valid_from = f.now - 5;
     Object.assign(f.pin, finalityPin(policy));
-    // Still within TTL: this must fail because assessment predates this policy,
-    // not because the evidence itself has already expired.
+
     Object.assign(f.source, {
       policy_sha256: f.pin.digest,
       assessed_at: f.now - 10,

@@ -25,7 +25,7 @@ async function clean() {
   DELETE FROM account_backup_transactions; DELETE FROM account_backup_outbox; DELETE FROM account_backup_commits; DELETE FROM account_backups;`);
   await cleanCreationDelivery();
 }
-// Advance expiry cases explicitly; host scheduling must not age signed fixtures.
+
 beforeEach(async () => {
   await clean();
   vi.spyOn(Date, 'now').mockReturnValue(Date.now());

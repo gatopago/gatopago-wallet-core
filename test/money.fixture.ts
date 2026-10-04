@@ -13,7 +13,6 @@ import type { MoneyKind } from '@gatopago/shared/v3/money-wire';
 import { CLIENT_RELEASE_ID } from '@gatopago/shared/v3/client-release';
 import marketJson from '../config/markets/aave-v3-arbitrum-sepolia-usdc.json';
 
-/** Synthetic monetary review with an ephemeral real P256 key. */
 export function createMoneyFixture(kind: MoneyKind = 'aave_supply') {
   const keys = initializationFixture(),
     initial = prepareInitialization(keys.input),

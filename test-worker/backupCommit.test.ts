@@ -35,9 +35,6 @@ const count = () =>
 const stored = (id: string) =>
   env.WALLET_DB.prepare('SELECT * FROM account_backup_commits WHERE id = ?').bind(id).first();
 
-// Each case traverses signed creation, D1 projection, backup and commit with
-// actual P-256/ECDSA. Allow CPU contention in the full workerd suite, not longer
-// authority/finality lifetimes (those remain unchanged and explicitly tested).
 describe('owned durable second backup consent', { timeout: 15_000 }, () => {
   it('requires previously signed backup and a currently observed pending proposal', async () => {
     const f = await backupScenario(),
@@ -214,8 +211,7 @@ describe('owned durable second backup consent', { timeout: 15_000 }, () => {
     const second = await f.repository().prepareCommit(b, f.request.id, signal());
     const proof = f.f.assertion(p.commit_digest);
     await f.repository().authorizeCommit(a, proof, signal());
-    // Independently prepared consents can have different deadlines across a second boundary.
-    // Exercise B's exact boundary, not A's earlier deadline.
+
     const clock = vi.spyOn(Date, 'now').mockReturnValue((second.valid_until - 1) * 1000);
     f.fetch.mockClear();
     expect((await f.repository().readCommit(b)).state).toBe('prepared');
@@ -395,8 +391,7 @@ describe('owned durable second backup consent', { timeout: 15_000 }, () => {
       f.f.assertion(q.commit_digest),
       q.valid_after,
     );
-    // Synthetic storage corruption: complete shape and correct calldata checksum, but
-    // a signature from another ephemeral key. Reading must independently reject it.
+
     await env.WALLET_DB.prepare(
       `UPDATE account_backup_commits SET authorized_at = ?, assertion_body = ?, confirmation_json = ?, calldata_sha256 = ?, authorized_auth_time = ? WHERE id = ?`,
     )

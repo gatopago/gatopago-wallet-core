@@ -108,7 +108,6 @@ function base(state: AuthorityModelState, now = NOW) {
   };
 }
 
-/** Synthetic already-verified facts for the specification; these are NOT signatures. */
 function witnesses<K extends AuthorizationKind>(
   state: AuthorityModelState,
   kind: K,
@@ -642,7 +641,7 @@ describe('V3 authority state specification — not a deployed contract or crypto
   it('same security transition converges across three chains despite different local admin nonces', () => {
     const manifests = chains.map((chainId, index) => {
       const state = initialized(initialPolicy, chainId);
-      // A prior canceled proposal advances only that chain's nonce, not its manifest.
+
       let prior = state;
       for (let n = 0; n < index; n++) {
         const prepared = transitionAuthorityModel(
@@ -673,7 +672,7 @@ describe('V3 authority state specification — not a deployed contract or crypto
       for (let step = 0; step < 48; step++) {
         random = (Math.imul(random, 1664525) + 1013904223) >>> 0;
         clock += random % 3 === 0 ? COMPLETION + 1 : 1;
-        // Hash only the selected action. Coverage/seed/depth stay identical under full-suite contention.
+
         const candidates: Array<() => ModelAction> = [
           () => spend(state, clock),
           () => freeze(state, clock),

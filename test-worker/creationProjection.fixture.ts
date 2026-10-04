@@ -72,7 +72,7 @@ export async function creationProjectionScenario(observe = true) {
           data: call.data,
         }).functionName;
       } catch {
-        /* Other ABI. */
+        /* empty */
       }
       try {
         accountMethod = decodeFunctionData({
@@ -80,7 +80,7 @@ export async function creationProjectionScenario(observe = true) {
           data: call.data,
         }).functionName;
       } catch {
-        /* Other ABI. */
+        /* empty */
       }
       if (securityMethod === 'securitySnapshot')
         return encodeFunctionResult({

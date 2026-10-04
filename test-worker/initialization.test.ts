@@ -24,8 +24,7 @@ const request = (credentialRef: ReturnType<typeof createResourceId<'operation'>>
 async function enroll(principal = identity(), key = f.input.publicKey) {
   const session = await seedUser(env.WALLET_DB, principal);
   const id = createResourceId('operation');
-  // Seed only prior enrollment for these repository tests. Signatures below are real ephemeral
-  // P-256/WebAuthn; enrollment's CBOR/create+get/JWT path is independently tested in enrollment.test.ts.
+
   await env.WALLET_DB.prepare(
     `INSERT INTO webauthn_credentials
 		(id,user_id,rp_id,origin,credential_id,public_key,transports_json,aaguid,backup_eligible,backed_up,sign_count,response_hash,created_at)

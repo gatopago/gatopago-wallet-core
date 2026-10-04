@@ -43,8 +43,7 @@ export async function seedMoneyDelivery(database: D1Database, dispatch = true, h
     nonce: '0',
     send_enabled: false as const,
   };
-  // Expiry fixtures represent an authorization persisted in the past. They use
-  // real cryptographic records but cannot pass today's fresh-consent SQL gate.
+
   let historicId;
   if (historical) {
     historicId = createResourceId('operation');

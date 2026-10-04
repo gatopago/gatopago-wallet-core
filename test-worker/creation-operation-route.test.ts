@@ -115,11 +115,12 @@ function sponsoredRuntime(settings: ReturnType<typeof runtimeFixture>) {
     terms,
     authorize: async (_operation, validAfter, validUntil) => terms(validAfter, validUntil),
   });
-  return () => createWalletRuntime(
-    { ...env, ...settings.bindings, WALLET_PAYMASTER_SIGNER_KEY: key },
-    config,
-    { ...settings.catalog, production: [{ ...settings.network, paymaster: policy }] },
-  );
+  return () =>
+    createWalletRuntime(
+      { ...env, ...settings.bindings, PRIVATE_KEY: key },
+      config,
+      { ...settings.catalog, production: [{ ...settings.network, paymaster: policy }] },
+    );
 }
 async function start(authorized = true, subject = 'creation-http-a') {
   const principal = testPrincipal(subject);
@@ -279,7 +280,8 @@ describe('first creation operation HTTP boundary (synthetic quote/observer, real
     expect((await queued()).results).toHaveLength(0);
   });
   it('refuses consumer creation without sponsorship before RPC or operation persistence', async () => {
-    const t = await start(), settings = runtimeFixture(f.pin);
+    const t = await start(),
+      settings = runtimeFixture(f.pin);
     const observe = vi.spyOn(runtimeFinality, 'requireFreshCreationDeployment');
     const runtime = createWalletRuntime({ ...env, ...settings.bindings }, config, settings.catalog);
     const result = await runtime.creationOperation(await request(path(t.id), {}), env, config);

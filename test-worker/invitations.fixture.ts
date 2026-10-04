@@ -1,6 +1,5 @@
 import { invitationCode } from '../src/auth/invitations';
 
-/** Synthetic admission; operators insert their chosen code directly in D1. */
 export async function issueInvitation(
   database: D1Database,
   issuer: string,

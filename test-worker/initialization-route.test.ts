@@ -56,8 +56,7 @@ function proof(digest: `0x${string}`, options: Parameters<typeof f.assertion>[1]
     signature: b64(p.signatureDER),
   };
 }
-// Only the fresh deployment observer is stubbed in these HTTP tests. Profiles are
-// synthetic. JWT verification, P-256 typed signatures, ownership and D1 are real.
+
 function candidate(observe = vi.fn(async () => undefined)) {
   const deps = {
     profiles: [{ ...f.pin, environment: 'production' as const }],

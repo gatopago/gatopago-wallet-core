@@ -32,12 +32,12 @@ export async function backupProjectionScenario() {
           data,
         }).functionName;
       } catch {
-        /* Other ABI. */
+        /* empty */
       }
       try {
         accountMethod = decodeFunctionData({ abi: accountInspectionAbi, data }).functionName;
       } catch {
-        /* Other ABI. */
+        /* empty */
       }
       if (accountMethod === 'inspectAccount')
         return encodeFunctionResult({

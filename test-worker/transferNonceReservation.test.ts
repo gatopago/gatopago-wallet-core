@@ -72,7 +72,6 @@ import { readTransferDraft } from '@gatopago/shared/v3/transfer-review-record';
 
 beforeAll(() => applyD1Migrations(env.WALLET_DB, env.V3_TEST_MIGRATIONS));
 beforeEach(async () => {
-  // Ephemeral test binding only. No remote resources or user accounts.
   await env.WALLET_DB
     .exec(`DELETE FROM user_operation_submissions; DELETE FROM transfer_reconciliations; DELETE FROM wallet_balance_floors; DELETE FROM transfer_finality_conflicts; DELETE FROM transfer_finality_journal; DELETE FROM transfer_nonce_reservations; DELETE FROM wallet_accounts;
     DELETE FROM wallets; DELETE FROM webauthn_credentials; DELETE FROM users;`);
@@ -239,7 +238,6 @@ describe('V3 pre-delivery nonce reservation with real D1', () => {
           await deliveryProof(s, authorization, held!.id),
         );
     if (scenario === 'draft-purged') {
-      // Reservations do not depend on a preparation's retention window.
       await env.WALLET_DB.prepare('DELETE FROM transfer_preparations WHERE wallet_account_id = ?')
         .bind(s.accountId)
         .run();
@@ -420,7 +418,7 @@ describe('V3 pre-delivery nonce reservation with real D1', () => {
       firebase_project_id: 'v3-runtime-test',
       wallet_enabled: scenario === 'disabled-network' ? [] : [f.request.network_id],
     });
-    // Session admission is exercised with real JWT/WebAuthn/RPC in access.test.ts.
+
     vi.spyOn(sessionVerifier, 'verifyAppSession').mockResolvedValue(
       scenario === 'foreign' ? { ...s.identity, userId: 'other' } : s.identity,
     );
@@ -487,14 +485,12 @@ describe('V3 pre-delivery nonce reservation with real D1', () => {
     const confirmSpy = vi
       .spyOn(confirmationCoordinator, 'confirmOwnedTransfer')
       .mockResolvedValue({ ...held, preparation_id: saved.id, consent_digest: f.p.digest });
-    const deliverSpy = vi
-      .spyOn(deliveryCoordinator, 'deliverOwnedTransfer')
-      .mockResolvedValue({
-        operation_id: held.id,
-        userop_hash: f.p.userOpHash,
-        delivery: 'accepted',
-        settlement: 'unconfirmed',
-      });
+    const deliverSpy = vi.spyOn(deliveryCoordinator, 'deliverOwnedTransfer').mockResolvedValue({
+      operation_id: held.id,
+      userop_hash: f.p.userOpHash,
+      delivery: 'accepted',
+      settlement: 'unconfirmed',
+    });
     let path = `${root}/transfer-preparations`,
       method = 'POST';
     let body: unknown =
@@ -1063,8 +1059,7 @@ describe('V3 pre-delivery nonce reservation with real D1', () => {
         scenario === 'reserved' ? '8990' : '10000',
       );
       expect(result.context.valid_until).toBe(f.now + 20);
-      // Composition output can pass the existing independent cryptographic authorization,
-      // but preparing alone neither writes a hold nor broadcasts an operation.
+
       const authorized = await authorizeTransferOperation(
         result.candidate.request,
         result.context,
@@ -1140,24 +1135,22 @@ describe('V3 pre-delivery nonce reservation with real D1', () => {
       block_number: a.checkpoint.block_number,
       block_timestamp: String(s.f.now + 1),
     };
-    const receiptSpy = vi
-      .spyOn(receiptReader, 'observeTransferReceipt')
-      .mockResolvedValue({
-        schema_version: 1,
-        network_id: a.request.network_id,
-        deployment_sha256: a.deployment_digest,
-        userop_hash: a.userOpHash,
-        consent_digest: a.digest,
-        transaction_hash: transaction,
-        ...block,
-        transaction_index: '0',
-        outcome: scenario === 'reconcile-reverted' ? 'execution_reverted' : 'execution_succeeded',
-        actual_gas_cost: '100',
-        actual_gas_used: '50',
-        log_indexes: { operation: '2', calls: '1', transfers: [] },
-        finality: 'not_assessed',
-        settlement: 'not_assessed',
-      });
+    const receiptSpy = vi.spyOn(receiptReader, 'observeTransferReceipt').mockResolvedValue({
+      schema_version: 1,
+      network_id: a.request.network_id,
+      deployment_sha256: a.deployment_digest,
+      userop_hash: a.userOpHash,
+      consent_digest: a.digest,
+      transaction_hash: transaction,
+      ...block,
+      transaction_index: '0',
+      outcome: scenario === 'reconcile-reverted' ? 'execution_reverted' : 'execution_succeeded',
+      actual_gas_cost: '100',
+      actual_gas_used: '50',
+      log_indexes: { operation: '2', calls: '1', transfers: [] },
+      finality: 'not_assessed',
+      settlement: 'not_assessed',
+    });
     vi.spyOn(finalityReader, 'assessCheckpointFinality').mockResolvedValue({
       ...s.f.approval.security_evidence.finality,
       target: block,
@@ -2171,7 +2164,7 @@ describe('V3 pre-delivery nonce reservation with real D1', () => {
       assetDisplay: { [a.request.asset_id]: { symbol: 'ETH', decimals: 18 } },
     };
     const transaction = `0x${'11'.repeat(32)}` as const;
-    // Composition fixtures only: raw receipt/code verification is exercised by v3TransferReceipt.test.ts.
+
     const observation: NonNullable<
       Awaited<ReturnType<typeof receiptReader.observeTransferReceipt>>
     > = {
@@ -2722,12 +2715,10 @@ describe('V3 pre-delivery nonce reservation with real D1', () => {
     const s = await setup(),
       a = await s.signed();
     await expect(
-      s
-        .repository()
-        .reserve(s.accountId, {
-          ...a,
-          funding_reservation: a.funding_reservation.map((row) => ({ ...row, debit_atomic: '1' })),
-        }),
+      s.repository().reserve(s.accountId, {
+        ...a,
+        funding_reservation: a.funding_reservation.map((row) => ({ ...row, debit_atomic: '1' })),
+      }),
     ).rejects.toThrow('TRANSFER_FUNDS_INVALID');
     expect((await rows()).results).toHaveLength(0);
   });
@@ -2971,7 +2962,7 @@ describe('V3 pre-delivery nonce reservation with real D1', () => {
     );
     try {
       await expect(s.repository().reserve(s.accountId, a)).rejects.toThrow();
-      // The claim has no send authority and retains history even when access is revoked.
+
       expect((await rows()).results).toHaveLength(1);
     } finally {
       await env.WALLET_DB.exec('DROP TRIGGER revoke_transfer_owner');

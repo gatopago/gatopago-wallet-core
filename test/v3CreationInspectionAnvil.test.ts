@@ -87,14 +87,7 @@ const artifact = (name: string): Artifact =>
   );
 let node: ChildProcessWithoutNullStreams | undefined;
 
-/** Fresh loopback-only Anvil, no fork, remote RPC, signing key, existing node or persisted
- * state. Minimal child environment excludes ANVIL_* and all operational credentials.
- * Stdout stays private (Anvil prints its public development accounts); only the listener
- * line is parsed. This test owns and terminates exactly this child process.
- */
 async function startNode(): Promise<string> {
-  // Generated Worker types augment ProcessEnv with production bindings. Preserve its
-  // type without assertions, then REMOVE every nonessential key before child creation.
   const childEnv = { ...process.env };
   const allowed = new Set(['PATH', 'SYSTEMROOT', 'WINDIR', 'TEMP', 'TMP']);
   for (const name of Object.keys(childEnv))
@@ -134,9 +127,7 @@ async function startNode(): Promise<string> {
       finish(new Error('Anvil executable unavailable; install Foundry and build contracts')),
     );
     child.once('exit', () => finish(new Error('Owned Anvil exited before listening')));
-    child.stderr.on('data', () => {
-      /* drain without printing process diagnostics */
-    });
+    child.stderr.on('data', () => {});
     child.stdout.on('data', (chunk: Buffer) => {
       if (done) return;
       text = (text + chunk.toString('utf8')).slice(-8192);
@@ -217,8 +208,6 @@ async function setup() {
   const verifier = await deploy('AccountV3WebAuthnVerifier');
   const f = initializationFixture();
   function component(result: Awaited<ReturnType<typeof deploy>>): DeploymentComponent {
-    // Runtime, receipt and constructor encoding are REAL local evidence. Source/approval
-    // metadata remains explicitly synthetic: this is NOT a publishable/admitted manifest.
     return {
       ...f.profile.deployment.components.implementation,
       address: result.address,
@@ -348,7 +337,7 @@ describe('Compiled Account V3 composition on an owned local EVM', () => {
     const input = { ...test.f.input, ...(await test.inspectionInput()) };
     const now = Math.floor(Date.now() / 1000);
     const initial = test.f.assertion(prepareInitialization(input).digest);
-    // Local test budget, not bundler/ ERC-7562 admission or an estimate for a public network.
+
     const terms: CreationGasTerms = {
       verificationGasLimit: 2_000_000n,
       callGasLimit: 100_000n,
@@ -384,7 +373,7 @@ describe('Compiled Account V3 composition on an owned local EVM', () => {
       }),
     ).toBe(signed.userOpHash);
     expect(await test.client.getCode({ address: signed.operation.sender })).toBeUndefined();
-    // Development ETH from this freshly spawned loopback node, no user/testnet funds.
+
     const prefund = 10_000_000_000_000_000n;
     const funding = await test.wallet.sendTransaction({
       to: signed.operation.sender,
@@ -413,8 +402,7 @@ describe('Compiled Account V3 composition on an owned local EVM', () => {
         gas: 10_000_000n,
       }),
     ).rejects.toThrow();
-    // Deliberate local fault injection after the failed simulation: prove that the real
-    // reverted transaction rolls back factory deployment and any account prefund charge.
+
     const invalidHash = await test.wallet.writeContract({
       address: ep,
       abi,
@@ -567,8 +555,7 @@ describe('Compiled Account V3 composition on an owned local EVM', () => {
       const f = initializationFixture(),
         now = Math.floor(Date.now() / 1000);
       const latest = await test.client.getBlock();
-      // EntryPoint's validity range excludes validAfter itself. Mine strictly after
-      // the signed lower bound even if Anvil and the wall clock share a second.
+
       await test.control.setNextBlockTimestamp({
         timestamp: latest.timestamp >= BigInt(now) ? latest.timestamp + 1n : BigInt(now) + 1n,
       });
@@ -674,7 +661,7 @@ describe('Compiled Account V3 composition on an owned local EVM', () => {
       );
       expect(creation.outcome).toBe('creation_succeeded');
       expect(await test.client.getBalance({ address: signed.operation.sender })).toBe(0n);
-      // Exactly the transferred value, no gas prefund and no EntryPoint deposit for the account.
+
       await mined(await test.wallet.sendTransaction({ to: signed.operation.sender, value: 7n }));
       const block = await test.client.getBlock(),
         at = Number(block.timestamp) - 1,
@@ -809,8 +796,7 @@ describe('Compiled Account V3 composition on an owned local EVM', () => {
           initialization = { ...f.input.initialization, ...(await test.inspectionInput()) };
         const initial = prepareInitialization(initialization),
           now = Math.floor(Date.now() / 1000);
-        // Snapshot restoration can leave Anvil's clock behind wall time for the next case.
-        // Mine a fresh local checkpoint before submitting its newly signed creation window.
+
         const chainTime = (await test.client.getBlock()).timestamp;
         await test.control.setNextBlockTimestamp({
           timestamp: chainTime >= BigInt(now) ? chainTime + 1n : BigInt(now),
@@ -872,7 +858,7 @@ describe('Compiled Account V3 composition on an owned local EVM', () => {
           return { result, time: Number(checkpoint.timestamp) };
         }
         const before = await security();
-        // Use the REAL compiled verifier, not the synthetic fixture's descriptor.
+
         const nextPolicy = {
           ...f.input.nextPolicy,
           signers: f.input.nextPolicy.signers.map((s) =>
@@ -961,8 +947,7 @@ describe('Compiled Account V3 composition on an owned local EVM', () => {
         await expect(
           test.client.call({ account: test.deployer, to: initial.account, data: commit.data }),
         ).rejects.toThrow();
-        // No WebAuthn, Firebase, GatoPago, bundler or paymaster below: an ephemeral direct key
-        // signs and an unrelated local relayer submits. This is NOT a human recovery/exit drill.
+
         const key = f.keys[0],
           index = nextPolicy.signers.findIndex((s) => s.key === key.address.toLowerCase());
         const recipient = f.keys[1].address,
@@ -998,8 +983,7 @@ describe('Compiled Account V3 composition on an owned local EVM', () => {
         await expect(
           test.client.call({ account: test.deployer, to: initial.account, data: spend }),
         ).rejects.toThrow();
-        // Either explicitly enrolled direct key can administer this 1-of-N policy.
-        // An address alone is never authority: an exact typed signature is required.
+
         const freeze = {
           accountId: initial.message.accountId,
           generation: 3,

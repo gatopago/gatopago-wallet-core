@@ -137,16 +137,14 @@ async function fixture() {
       spend_readiness: 'not_assessed',
     }),
   );
-  const nonce = vi
-    .spyOn(nonceReader, 'observeTransferNonce')
-    .mockImplementation(async (input) => ({
-      network_id: c.request.network_id,
-      account: c.account,
-      entry_point: c.plan.entryPoint,
-      checkpoint: input.checkpoint,
-      nonce: '0',
-      observed_at: now,
-    }));
+  const nonce = vi.spyOn(nonceReader, 'observeTransferNonce').mockImplementation(async (input) => ({
+    network_id: c.request.network_id,
+    account: c.account,
+    entry_point: c.plan.entryPoint,
+    checkpoint: input.checkpoint,
+    nonce: '0',
+    observed_at: now,
+  }));
   vi.spyOn(positionReader, 'observeAavePosition').mockImplementation(async (input) => ({
     network_id: c.request.network_id,
     market_id: s.market.market_id,

@@ -46,7 +46,6 @@ const plan: ExecutionPlan = {
 
 describe('V3 executable CALL encoding', () => {
   it('matches the compiled Solidity executor ABI, including the signature envelope shape', () => {
-    // check:v3 builds the storage probe (and Solidity artifacts) before its TypeScript tests.
     const artifact = JSON.parse(
       readFileSync(
         new URL(import.meta.resolve('@gatopago/contract-artifacts/AccountV3Execution.json')),

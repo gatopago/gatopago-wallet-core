@@ -30,7 +30,6 @@ const backupRoute = createBackupRoute({
   },
 });
 
-// HTTP now authenticates the same passkey that the synthetic wallet authorizes.
 async function admitted<
   T extends Pick<
     Scenario,
@@ -170,7 +169,7 @@ async function clean() {
   );
   await cleanCreationDelivery();
 }
-// Keep cryptographic fixtures on a logical clock; expiry tests advance it explicitly.
+
 beforeEach(async () => {
   await clean();
   vi.spyOn(Date, 'now').mockReturnValue(Date.now());
@@ -479,7 +478,7 @@ describe(
       const p = await f.repository().read(r.id),
         compiled = prepareBackupEnrollment(p.input, p.valid_after),
         body = await proofs(f, p);
-      // The default fixture signed the new factor's digest with the old passkey: reject it.
+
       expect(
         (await c.run(await request(f, `${ROOT}/${r.id}/authorize`, body), env, config)).status,
       ).toBe(400);
@@ -854,7 +853,7 @@ describe('second backup confirmation over HTTP', { timeout: 15_000 }, () => {
     expect(
       await (await c.run(await request(f, `${path}/${id}`, null, 'GET'), env, config)).json(),
     ).toMatchObject({ state: 'expired', valid_until: p.valid_until });
-    // Expired access evidence is refreshed even when the consent itself is read-only.
+
     expect(f.fetch).toHaveBeenCalled();
     f.fetch.mockClear();
     expect((await c.run(await request(f, path, { request_id: id }), env, config)).status).toBe(410);

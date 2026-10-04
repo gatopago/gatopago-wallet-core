@@ -40,8 +40,6 @@ const transaction = (id: string) =>
     .bind(id)
     .first();
 
-/** Actual D1, P-256 consent, ephemeral sponsor ECDSA, pinned code/security inspection
- * and finality assessment. ONLY chain/provider admission and RPC responses are synthetic. */
 function harness(
   f: Pick<Awaited<ReturnType<typeof backupScenario>>, 'configuration' | 'prepared' | 'fetch'>,
   id: ResourceId<'operation'>,
@@ -308,7 +306,7 @@ describe('private backup coordinator', { timeout: 25_000 }, () => {
       const { h } = await prepareScenario();
       if (failure === 'nonce') h.state.secondNonce = '0x1';
       if (failure === 'gas') h.state.secondGas = '0x0';
-      if (failure === 'buffer_budget') h.state.secondGas = '0xc3500'; // 800k + buffer exceeds ceiling; no clamp.
+      if (failure === 'buffer_budget') h.state.secondGas = '0xc3500';
       expect(await h.run()).toBe('deferred');
       expect(h.signer.sign).not.toHaveBeenCalled();
       expect(await transaction(h.id)).toBeNull();
@@ -324,7 +322,7 @@ describe('private backup coordinator', { timeout: 25_000 }, () => {
     expect(await h.run()).toBe('deferred');
     const reserved = await transaction(h.id);
     vi.spyOn(Date, 'now').mockReturnValue((deliveryNow() + 4) * 1000);
-    h.state.secondGas = '0x10000'; // A new quote would differ; reservation must not.
+    h.state.secondGas = '0x10000';
     expect(await h.run()).toBe('accepted');
     expect(h.signer.sign).toHaveBeenCalledTimes(2);
     expect(h.signer.sign.mock.calls[0][1].unsigned).toBe(h.signer.sign.mock.calls[1][1].unsigned);

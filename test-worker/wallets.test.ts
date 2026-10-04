@@ -159,7 +159,7 @@ beforeAll(async () => {
 });
 beforeEach(async () => {
   await clearIdentityKeys();
-  // This binding is ephemeral local D1, never the legacy or remote database.
+
   await env.WALLET_DB.exec(
     `DELETE FROM wallet_accounts; DELETE FROM wallets; DELETE FROM webauthn_credentials; DELETE FROM users;`,
   );
@@ -398,7 +398,7 @@ describe('V3 authenticated ownership → pinned inspection integration', () => {
     const seeded = await seedAccount(await session()),
       scenario = seeded.scenario;
     const request = await input(`/wallets/${seeded.walletId}/accounts/${seeded.accountId}/context`);
-    // Prime JWT verification before checking that context resolution makes no RPC calls.
+
     await verifyConsumerIdentity(request, projectId, 'production');
     const fetcher = vi.fn();
     vi.stubGlobal('fetch', fetcher);
@@ -659,7 +659,7 @@ describe('V3 authenticated ownership → pinned inspection integration', () => {
       finality: 'finalized',
       security_expires_at: seeded.scenario.source.expires_at,
     });
-    expect(fetchMock).toHaveBeenCalledTimes(50); // Includes the WebAuthn verifier code on both providers.
+    expect(fetchMock).toHaveBeenCalledTimes(50);
     expect(
       await env.WALLET_DB.prepare('SELECT deployment_state FROM wallet_accounts').first(
         'deployment_state',

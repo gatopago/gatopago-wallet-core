@@ -20,8 +20,6 @@ export const creationGas = () => ({
   maximumGasCharge: 2_250_000_000_000_000n,
 });
 
-/** Local synthetic enrollment and real, ephemeral P-256 signatures. No Firebase JWT,
- * remote profile admission, production credential or real network is involved. */
 export async function seedCreationDelivery(
   principal = deliveryIdentity(),
   pin?: CreationProfilePin,

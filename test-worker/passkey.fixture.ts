@@ -11,9 +11,6 @@ const hash = (value: string | Uint8Array) =>
   Uint8Array.from(createHash('sha256').update(value).digest());
 const join = (...parts: Uint8Array[]) => Uint8Array.from(parts.flatMap((part) => [...part]));
 
-/** Real ephemeral OpenSSL P-256 keys/DER signatures plus FIDO none CBOR. No
- * mocking verifyRegistrationResponse, the Account V3 codec, D1, or JWT crypto.
- */
 export function credential(
   attempt: {
     scope: { rpId: string; origin: string };

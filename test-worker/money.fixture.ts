@@ -3,8 +3,6 @@ import { createMoneyFixture } from '../test/money.fixture';
 import { seedUser } from './user.fixture';
 import { testPrincipal } from './principal.fixture';
 
-/** Ephemeral passkey and synthetic account/funding data. No real user, signer,
- * financial execution, deployed policy or admission is implied by this fixture. */
 export async function seedMoneyFixture(database: D1Database, kind: MoneyKind = 'aave_supply') {
   const fixture = createMoneyFixture(kind),
     { initial, now, walletId, accountId, deployment } = fixture;

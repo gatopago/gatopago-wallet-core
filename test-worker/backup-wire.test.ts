@@ -57,7 +57,7 @@ async function clean() {
 beforeAll(async () => {
   await applyD1Migrations(env.WALLET_DB, env.V3_TEST_MIGRATIONS);
 });
-// Advance expiry cases explicitly; host scheduling must not age signed fixtures.
+
 beforeEach(async () => {
   await clean();
   vi.spyOn(Date, 'now').mockReturnValue(Date.now());

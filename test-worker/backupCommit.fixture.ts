@@ -10,8 +10,6 @@ import { backupScenario } from './backup.fixture';
 import { deliveryNow } from './creationDelivery.fixture';
 const signal = () => new AbortController().signal;
 
-/** Advances the synthetic chain, while retaining actual EIP-1898/finality transports and
- * P-256/ECDSA verification in workerd. No broadcast, real admission or secret is involved. */
 export async function backupCommitScenario() {
   const f = await backupScenario(),
     request = f.request(),
@@ -83,7 +81,7 @@ export async function backupCommitScenario() {
           data: (params[0] as { data: Hex }).data,
         }).functionName;
       } catch {
-        /* Another ABI. */
+        /* empty */
       }
       if (name === 'securitySnapshot')
         return encodeFunctionResult({

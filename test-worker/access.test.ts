@@ -84,7 +84,7 @@ async function setup() {
           data: (params[0] as { data: `0x${string}` }).data,
         }).functionName;
       } catch {
-        /* Another ABI. */
+        /* empty */
       }
       if (name === 'securityPolicy')
         return encodeFunctionResult({
@@ -179,8 +179,6 @@ describe('onchain application-access reconciliation', { timeout: 20_000 }, () =>
     expect(await saved(f.session.user_id)).toBe(before);
   });
   it('serves the composed identity projection during an RPC outage but keeps balances and expired access closed', async () => {
-    // Reuse the projected creation fixture so the wallet and runtime share the
-    // same admitted deployment. The generic inspection fixture has another pin.
     const f = await setup();
     await f.sync();
     const settings = runtimeFixture(f.configuration.profiles[0]);
@@ -223,7 +221,7 @@ describe('onchain application-access reconciliation', { timeout: 20_000 }, () =>
     expect(f.fetch).toHaveBeenCalled();
     f.fetch.mockClear();
     expect(await saved(f.session.user_id)).toBe(before);
-    // This projection is not an exception to onchain credential revocation.
+
     f.advance();
     const expired = await worker.fetch(await request('context'), bindings);
     expect(expired.status).toBe(503);
@@ -431,7 +429,7 @@ describe('onchain application-access reconciliation', { timeout: 20_000 }, () =>
       .spyOn(runtimeModule, 'createWalletRuntime')
       .mockImplementation((env, environment, value) => {
         expect(value).toEqual(catalog(environment));
-        // Real configuration parsing/composition, with synthetic chain observations.
+
         return { ...create(env, environment, value), receivingProfiles: f.profiles };
       });
     const request = async () =>

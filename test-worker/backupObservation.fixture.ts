@@ -16,7 +16,7 @@ import { backupCommitScenario } from './backupCommit.fixture';
 import { cleanCreationDelivery, deliveryNow } from './creationDelivery.fixture';
 
 const signal = () => new AbortController().signal;
-// Independently spelled ABI from AccountV3Security's emitted events.
+
 const events = parseAbi([
   'event PolicyProposed(bytes32 indexed proposalHash,uint8 kind,uint64 securityVersion,bytes32 nextPolicyHash,bytes32 chainScopeHash,uint48 readyAt,uint48 validUntil)',
   'event PolicyInstalled(bytes32 indexed proposalHash,bytes32 indexed manifestHash,uint64 securityVersion)',
@@ -30,7 +30,6 @@ export async function cleanBackupObservations() {
   await cleanCreationDelivery();
 }
 
-/** Actual D1 consent, P-256/ECDSA and local transaction signatures; RPC is synthetic. */
 export async function backupObservationScenario(kind: 'prepare' | 'commit' = 'prepare') {
   const f = await backupCommitScenario();
   let id = f.request.id;
@@ -68,8 +67,7 @@ export async function backupObservationScenario(kind: 'prepare' | 'commit' = 'pr
   f.state.head = height;
   const block = f.blocks.get(height)!,
     signature = parseTransaction(raw);
-  // The synthetic inclusion block is produced AFTER the consent, never at the
-  // earlier timestamp captured while the scenario was still preparing its keys.
+
   if (kind === 'commit') block.block_timestamp = String(deliveryNow());
   const tx = {
     hash: grant.transactionHash,

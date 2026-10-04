@@ -52,7 +52,7 @@ describe('finalized creation → atomic bootstrap projection', () => {
       .first();
     expect(record).toMatchObject({ source_epoch: 1 });
     expect(f.reply.mock.calls.every(([method]) => !method.startsWith('eth_send'))).toBe(true);
-    expect(f.fetch).toHaveBeenCalledTimes(50); // One WebAuthn verifier per provider, plus closing finality.
+    expect(f.fetch).toHaveBeenCalledTimes(50);
   });
   it('is idempotent across process instances without restarting RPC on a completed projection', async () => {
     const f = await scenario();

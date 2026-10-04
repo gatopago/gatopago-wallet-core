@@ -76,7 +76,6 @@ export function configureWalletNetworks(
   environment: Environment,
   bindings: Pick<WalletCoreV3Bindings, 'WALLET_RPC_ENDPOINTS' | 'WALLET_BACKUP_SIGNER_KEY'> & {
     PRIVATE_KEY?: string;
-    WALLET_PAYMASTER_SIGNER_KEY?: string;
   },
 ) {
   try {
@@ -140,8 +139,7 @@ export function configureWalletNetworks(
         if (
           !relayKey ||
           !/^0x[0-9a-fA-F]{64}$/.test(relayKey) ||
-          relayKey.toLowerCase() === key?.toLowerCase() ||
-          relayKey.toLowerCase() === bindings.WALLET_PAYMASTER_SIGNER_KEY?.toLowerCase()
+          relayKey.toLowerCase() === key?.toLowerCase()
         )
           throw invalid();
         const operator = privateKeyToAccount(relayKey as Hex).address;

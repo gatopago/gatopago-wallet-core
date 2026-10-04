@@ -236,7 +236,6 @@ describe('durable creation jobs: queue + scheduler + economic lifecycle', () => 
       log = vi.spyOn(console, 'warn').mockImplementation(() => {});
     f.configuration.checkpoint.mockRejectedValue(new Error('secret-url-and-signature'));
     for (let i = 0; i < 8; i++) {
-      // Preserve grant lifetime in this test: failure counters are the dimension under test.
       await env.WALLET_DB.prepare(
         'UPDATE account_creation_jobs SET next_attempt_at = 0 WHERE initialization_id = ?',
       )

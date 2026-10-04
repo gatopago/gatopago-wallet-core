@@ -183,7 +183,7 @@ describe('Account V3 pinned read-only inspection', () => {
         role === 'proxy' ? test.account : test.manifest.components[role].address,
         '0x',
       );
-      // Empty account code specifically means not deployed; nonempty unexpected proxy must fail.
+
       if (role === 'proxy') test.state.codes.set(test.account, '0x6060');
       await expect(inspectAccountDeployment(test.client, test.input)).rejects.toThrow(
         'UNEXPECTED_CODE',
@@ -224,7 +224,7 @@ describe('Account V3 pinned read-only inspection', () => {
   });
   it('recognizes an independently pinned new revision without requiring original libraries or a live EntryPoint', async () => {
     const test = inspectionScenario();
-    // Different current target/modules, unchanged factory/proxy CREATE2 recipe.
+
     for (const [role, digit] of [
       ['implementation', 'a'],
       ['security_module', 'b'],

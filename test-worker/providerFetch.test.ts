@@ -11,8 +11,6 @@ afterEach(() => vi.restoreAllMocks());
 
 function provider(response: Response) {
   return vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
-    // Exercise workerd's real Request constructor before substituting network I/O.
-    // A plain fetch mock misses redirect modes unsupported by Workers.
     const request = new Request(input, init);
     expect(request.redirect).toBe('manual');
     return response;

@@ -164,16 +164,14 @@ export async function moneyOuterFixture(lateReceipt = false) {
       storage_layout_hash: f.f.keys.profile.deployment.storage_layout_hash,
       spend_readiness: 'not_assessed',
     }));
-  const nonce = vi
-    .spyOn(nonceReader, 'observeTransferNonce')
-    .mockImplementation(async (input) => ({
-      network_id: c.request.network_id,
-      account: c.account,
-      entry_point: c.plan.entryPoint,
-      checkpoint: input.checkpoint,
-      nonce: c.plan.nonce.toString(),
-      observed_at: now,
-    }));
+  const nonce = vi.spyOn(nonceReader, 'observeTransferNonce').mockImplementation(async (input) => ({
+    network_id: c.request.network_id,
+    account: c.account,
+    entry_point: c.plan.entryPoint,
+    checkpoint: input.checkpoint,
+    nonce: c.plan.nonce.toString(),
+    observed_at: now,
+  }));
   const position = vi
     .spyOn(positionReader, 'observeAavePosition')
     .mockImplementation(async (input) => ({

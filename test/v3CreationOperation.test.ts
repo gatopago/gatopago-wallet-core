@@ -10,7 +10,6 @@ import { executionAbi } from '@gatopago/shared/v3/execution';
 import { prepareInitialization } from '@gatopago/shared/v3/initialization';
 import { initializationFixture } from '@gatopago/test-fixtures/v3-initialization';
 
-// Deliberately generous local budgets, NOT ERC-7562 admission or network gas estimates.
 const terms: CreationGasTerms = {
   verificationGasLimit: 2_000_000n,
   callGasLimit: 100_000n,
@@ -114,7 +113,7 @@ describe('Account V3 first UserOperation, two explicit proofs and bounded gas', 
     for (const now of [f.input.validAfter - 1, f.input.validUntil, f.input.validUntil + 1]) {
       expect(() => authorizeCreationOperation(f.input, initial, terms, proof, now)).toThrow();
     }
-    // High bit denotes EntryPoint block-number validity, not an ordinary timestamp.
+
     expect(() =>
       prepareInitialization({ ...f.input, validAfter: 0x800000000000, validUntil: 0x800000000001 }),
     ).toThrow();

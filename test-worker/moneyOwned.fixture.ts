@@ -15,8 +15,6 @@ export async function clearMoneyTestRows(database: D1Database) {
     DELETE FROM wallets; DELETE FROM webauthn_credentials; DELETE FROM users;`);
 }
 
-/** Real D1 owner; ephemeral P256 policy; synthetic observations. This fixture
- * exercises coordinators without implying RPC, deployment or financial proof. */
 export async function moneyOwnedFixture(database: D1Database, kind: MoneyKind = 'aave_supply') {
   const f = await seedMoneyFixture(database, kind),
     { profile, policy, market } = moneyTestProfile(f);

@@ -37,8 +37,7 @@ async function composed() {
     settings = runtimeFixture(f.configuration.profiles[0]);
   const bindings: WalletCoreV3Bindings = { ...env, ...settings.bindings };
   const worker = createWalletWorker(settings.catalog, () => settings.environment);
-  // The old delivery fixture did not need timestamps before broadcast. The live
-  // composition must also obtain fresh finality before selecting a checkpoint.
+
   const inspect = f.inspection.request.getMockImplementation()!;
   f.inspection.request.mockImplementation(async (input) => {
     const value = await inspect(input);
@@ -58,8 +57,7 @@ describe('Wallet Core composed entrypoint: real D1, signed grants, synthetic pro
     for (const path of ['/health/live', '/health/ready']) {
       expect((await exports.default.fetch(`https://local.invalid${path}`)).status).toBe(404);
     }
-    // The shipped production catalog is enabled now. Exercise an empty catalog
-    // explicitly, without depending on the deployment manifest's current state.
+
     const settings = runtimeFixture();
     const worker = createWalletWorker({ schema_version: 1, production: [] }, () => ({
       ...settings.environment,

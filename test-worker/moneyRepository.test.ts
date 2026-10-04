@@ -36,7 +36,7 @@ function authorized(
   const review = { ...f.review, approved_at: f.now, proofs },
     record = writeMoneyReview(review);
   const fingerprint = moneyConfirmationDigest(preparationId, f.candidate.digest, proofs);
-  // Synthetic current-head data only. RPC admission is covered separately.
+
   const fresh = {
     consent_digest: f.candidate.digest,
     userop_hash: f.candidate.userOpHash,
@@ -172,7 +172,7 @@ describe('Durable owner-bound money preparations in workerd', () => {
       scope: { rpId: 'evil.example', origin: 'https://evil.example' },
     };
     const encoded = writeMoneyDraft(alternate);
-    // Drop the immutability guard only inside this synthetic corruption test.
+
     await env.WALLET_DB.exec('DROP TRIGGER money_preparation_immutable');
     try {
       await env.WALLET_DB.prepare(
@@ -299,8 +299,7 @@ describe('Durable owner-bound money preparations in workerd', () => {
   });
   it('has one durable delivery winner with its job and dispatch lock before a send', async () => {
     const { f, repo, stored, preflight } = await deliveryFixture();
-    // Concurrent readers can detect a changed row and reject. Regardless, only
-    // one UPDATE may create a send grant; all other outcomes are historical.
+
     const outcomes = await Promise.allSettled([
       repo.beginDelivery(f.walletId, f.accountId, stored.id, preflight),
       repository(f).beginDelivery(f.walletId, f.accountId, stored.id, preflight),

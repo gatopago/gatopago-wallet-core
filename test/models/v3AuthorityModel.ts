@@ -1,9 +1,3 @@
-/**
- * E0 executable SPECIFICATION, deliberately under test/ and never imported by runtime code.
- * A witness represents a signature ALREADY cryptographically verified for this exact digest.
- * Supplying an ID here is not signature verification. RPC/finality, verifier codehashes,
- * ERC-4337 validation/execution and actual asset effects require separate implementations.
- */
 import { type Address, type Hex, keccak256 } from 'viem';
 import {
   ACCOUNT_GENERATION,
@@ -27,7 +21,7 @@ const ZERO_HASH = `0x${'00'.repeat(32)}` as Hex;
 const ZERO_ADDRESS = `0x${'00'.repeat(20)}` as Address;
 const MAX_NONCE = (1n << 256n) - 1n;
 const MAX_VERSION = (1n << 64n) - 1n;
-// Independent specification limits, deliberately not imported from the compiler.
+
 const MAX_CONSENT_SECONDS = 5 * 60;
 const MAX_COMPLETION_SECONDS = 7 * 24 * 60 * 60;
 type NonceSpace = 'spend' | 'admin';
@@ -75,7 +69,7 @@ export interface AuthorityModelState {
   nonces: Record<NonceSpace, bigint>;
   upgradesFrozen: boolean;
   pending: PendingProposal | null;
-  /** Ghost state only: number of accepted spend authorizations, NOT a wallet balance. */
+
   spendAuthorizations: bigint;
 }
 
@@ -205,7 +199,6 @@ function checkNonce(
   requireModel(message.nonce === state.nonces[space], 'WRONG_NONCE');
 }
 
-/** All new descriptors and role changes need explicit possession for THIS proposal. */
 function enrollment(
   state: AuthorityModelState,
   message: ChangeMessage,
@@ -351,7 +344,6 @@ export function initializeAuthorityModel(
   };
 }
 
-/** Pure transition: rejected actions leave the original state untouched, like an EVM revert. */
 export function transitionAuthorityModel(
   original: AuthorityModelState,
   action: ModelAction,
@@ -384,7 +376,7 @@ export function transitionAuthorityModel(
         'INVALID_PROPOSAL_LIFETIME',
       );
       requireModel(state.policy.mode === 'active', 'WRONG_ACCOUNT_MODE');
-      // Only one exact administrative proposal may be pending.
+
       requireModel(!state.pending, 'PROPOSAL_ALREADY_PENDING');
       const space = 'admin';
       checkNonce(state, message, space);
@@ -453,12 +445,12 @@ export function transitionAuthorityModel(
         'WRONG_PROPOSAL',
       );
       requireModel(now >= pending.readyAt && now < pending.validUntil, 'PROPOSAL_NOT_READY');
-      // UpgradeManifest retains its independent protocol; only policy commits use this window.
+
       if (pending.kind !== 'upgrade') {
         shortConsent(message);
         requireModel(message.validUntil <= pending.validUntil, 'OUTSIDE_VALIDITY');
       }
-      // This is the users' signed acknowledgement commitment, not an onchain proof of remote finality.
+
       requireModel(message.acknowledgementsHash !== ZERO_HASH, 'MISSING_ACKNOWLEDGEMENTS');
       checkNonce(state, message, 'admin');
       quorum(

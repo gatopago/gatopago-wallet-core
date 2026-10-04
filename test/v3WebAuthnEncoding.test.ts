@@ -207,7 +207,6 @@ describe('V3 WebAuthn encoding against the actual verifier profile', () => {
   });
   it('differentially checks 32 fresh Node/OpenSSL signatures and extra JSON fields', () => {
     for (let i = 0; i < 32; i++) {
-      // Ephemeral test key in memory only. No private key or credential is exported or persisted.
       const pair = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
       const value = input();
       value.key = webAuthnKeyFromSpki(

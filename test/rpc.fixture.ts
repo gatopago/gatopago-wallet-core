@@ -1,6 +1,5 @@
 export type RpcRead = { id: number; method: string; params: readonly unknown[] };
 
-/** Synthetic HTTP provider supports both single requests and real JSON-RPC batches. */
 export async function rpcReply(
   init: RequestInit | undefined,
   read: (request: RpcRead) => Promise<unknown>,

@@ -53,7 +53,7 @@ async function input(
   });
 }
 const run = (request: Request) => enrollmentRoute(request, env, config);
-// Count additional enrollments separately from the passkey that admitted each user.
+
 const count = () =>
   env.WALLET_DB.prepare(
     'SELECT count(*) AS n FROM webauthn_credentials WHERE login_enabled = 0',
@@ -135,7 +135,7 @@ describe('V3 authenticated credential inventory', () => {
     const body = credential(a, { createFlags: 0x5d, proofFlags: 0x1d, proofCount: 0 });
     expect((await complete(a, body)).status).toBe(200);
     expect((await complete(b, credential(b), 'user-b')).status).toBe(200);
-    await prepare(); // An uncompleted creation is not a registered credential.
+    await prepare();
     const before = await env.WALLET_DB.prepare(
       'SELECT * FROM webauthn_credentials ORDER BY id',
     ).all();
@@ -245,7 +245,7 @@ describe('V3 authenticated credential inventory', () => {
     await session();
     const attempt = await prepare();
     expect((await complete(attempt)).status).toBe(200);
-    // Synthetic rows exercise the inventory bound, not registration crypto or payment authority.
+
     const clone = (index: number) =>
       env.WALLET_DB.prepare(
         `INSERT INTO webauthn_credentials(id,user_id,rp_id,origin,credential_id,public_key,transports_json,aaguid,backup_eligible,backed_up,sign_count,response_hash,created_at)

@@ -64,16 +64,14 @@ async function fixture(expired = true) {
   const account = vi
     .spyOn(accountInspection, 'inspectAccountDeployment')
     .mockResolvedValue(recognized);
-  const sequence = vi
-    .spyOn(nonceReader, 'observeTransferNonce')
-    .mockResolvedValue({
-      network_id: c.request.network_id,
-      account: c.account,
-      entry_point: c.plan.entryPoint,
-      checkpoint: recognized.checkpoint,
-      nonce: '0',
-      observed_at: now,
-    });
+  const sequence = vi.spyOn(nonceReader, 'observeTransferNonce').mockResolvedValue({
+    network_id: c.request.network_id,
+    account: c.account,
+    entry_point: c.plan.entryPoint,
+    checkpoint: recognized.checkpoint,
+    nonce: '0',
+    observed_at: now,
+  });
   const closing = vi.spyOn(finality, 'assessCheckpointFinality').mockResolvedValue(evidence);
   return {
     ...s,

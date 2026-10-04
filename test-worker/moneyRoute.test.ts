@@ -93,34 +93,28 @@ describe('Owner-only money HTTP commands and history', () => {
       expires_at: f.now + 10,
     }));
     const route = createMoneyRoute({ profiles: [profile], resolvePreparation: resolve });
-    const prepare = vi
-      .spyOn(preparation, 'prepareOwnedMoney')
-      .mockResolvedValue({
-        candidate: f.candidate,
-        review: f.review,
-        evidence: {} as Awaited<ReturnType<typeof preparation.prepareOwnedMoney>>['evidence'],
-        send_enabled: false,
-      });
-    const confirm = vi
-      .spyOn(confirmation, 'confirmOwnedMoney')
-      .mockResolvedValue({
-        id: s.stored.id,
-        preparation_id: s.stored.preparation_id,
-        consent_digest: f.candidate.digest,
-        state: 'authorized',
-        expires_at: f.context.valid_until,
-        send_enabled: false,
-      });
-    const deliver = vi
-      .spyOn(delivery, 'deliverOwnedMoney')
-      .mockResolvedValue({
-        money_schema_version: 1,
-        operation_id: s.stored.id,
-        userop_hash: f.candidate.userOpHash,
-        state: 'dispatch_pending',
-        delivery: 'accepted',
-        settlement: 'unconfirmed',
-      });
+    const prepare = vi.spyOn(preparation, 'prepareOwnedMoney').mockResolvedValue({
+      candidate: f.candidate,
+      review: f.review,
+      evidence: {} as Awaited<ReturnType<typeof preparation.prepareOwnedMoney>>['evidence'],
+      send_enabled: false,
+    });
+    const confirm = vi.spyOn(confirmation, 'confirmOwnedMoney').mockResolvedValue({
+      id: s.stored.id,
+      preparation_id: s.stored.preparation_id,
+      consent_digest: f.candidate.digest,
+      state: 'authorized',
+      expires_at: f.context.valid_until,
+      send_enabled: false,
+    });
+    const deliver = vi.spyOn(delivery, 'deliverOwnedMoney').mockResolvedValue({
+      money_schema_version: 1,
+      operation_id: s.stored.id,
+      userop_hash: f.candidate.userOpHash,
+      state: 'dispatch_pending',
+      delivery: 'accepted',
+      settlement: 'unconfirmed',
+    });
     const root = `/app/v1/wallets/${f.walletId}/accounts/${f.accountId}`;
     let path = `${root}/money-preparations`,
       method = 'POST',

@@ -40,7 +40,7 @@ async function start(principal = identity(), authorized = true) {
   const credentialRef = enrolled
     ? parseResourceId('operation', enrolled)
     : createResourceId('operation');
-  // Prior enrollment is a fixture; both creation authorizations below use real ephemeral P-256.
+
   if (!enrolled)
     await env.WALLET_DB.prepare(
       `INSERT INTO webauthn_credentials
@@ -310,8 +310,7 @@ describe('durable first UserOperation with distinct consent and transactional ou
         this: WalletRepository,
       ) {
         const session = await original.call(this);
-        // Two reads restore initial consent; the third is immediately before the atomic write.
-        // Invalidate after that read so ONLY the SQL authorization predicate can stop commitment.
+
         if (++reads === 3) {
           if (change === 'disabled')
             await env.WALLET_DB.prepare('UPDATE users SET disabled_at = ? WHERE id = ?')
@@ -347,7 +346,6 @@ describe('durable first UserOperation with distinct consent and transactional ou
       ['assertion_body', '{}'],
       ['operation_signature', '0xab'],
     ]) {
-      // Static allowlisted columns only; this is a corruption test, never caller-built SQL.
       await env.WALLET_DB.prepare(
         `UPDATE account_creation_operations SET ${column} = ? WHERE initialization_id = ?`,
       )

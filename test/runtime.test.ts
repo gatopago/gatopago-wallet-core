@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
-import { configureWalletNetworks, maximumGasCharge, sponsorshipConfigured } from '../src/runtime/config';
+import {
+  configureWalletNetworks,
+  maximumGasCharge,
+  sponsorshipConfigured,
+} from '../src/runtime/config';
 import reviewedCatalog from '../src/runtime/catalog';
 import { ARBITRUM_SEPOLIA_CREATION } from '@gatopago/shared/v3/wallet-release';
 import { runtimeFixture } from './runtime.fixture';
@@ -139,7 +143,7 @@ describe('reviewed Wallet Core runtime configuration', () => {
       );
     }
   });
-  it('requires a matching dedicated sponsor key before advertising consumer creation', () => {
+  it('requires the configured operator key to match the paymaster signer', () => {
     const key = generatePrivateKey();
     const paymaster = { signer: privateKeyToAccount(key).address } as NonNullable<
       ReturnType<typeof configureWalletNetworks>[number]['paymaster']
@@ -150,7 +154,7 @@ describe('reviewed Wallet Core runtime configuration', () => {
     expect(sponsorshipConfigured({ paymaster }, generatePrivateKey())).toBe(false);
     expect(sponsorshipConfigured({ paymaster }, key)).toBe(true);
   });
-  it('admits self relay without a bundler endpoint and requires an independent operator key', () => {
+  it('admits self relay without a bundler endpoint using the selected operator key', () => {
     const f = runtimeFixture(),
       key = generatePrivateKey();
     const transport = {
@@ -174,7 +178,6 @@ describe('reviewed Wallet Core runtime configuration', () => {
     for (const changed of [
       { ...bindings, PRIVATE_KEY: '' },
       { ...bindings, WALLET_BACKUP_SIGNER_KEY: key },
-      { ...bindings, WALLET_PAYMASTER_SIGNER_KEY: key },
     ]) {
       expect(() => configureWalletNetworks(catalog, f.environment, changed)).toThrow(
         'WALLET_RUNTIME_CONFIGURATION_INVALID',

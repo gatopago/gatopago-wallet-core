@@ -52,7 +52,7 @@ describe('V3 public Chromium WebAuthn assertion', () => {
 
   it('retains the captured high-S DER and proves the normalization used by Solidity', () => {
     const der = bytes(fixture.signatureDER);
-    // This exact captured vector has 32-byte R and a positive 33-byte S. Not a production DER parser.
+
     expect(der.length).toBe(71);
     expect(der.subarray(0, 4).toString('hex')).toBe('30450220');
     expect(der.subarray(4, 36)).toEqual(bytes(fixture.r));

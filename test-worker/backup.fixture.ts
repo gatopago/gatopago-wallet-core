@@ -13,8 +13,6 @@ import { backupFixture } from '@gatopago/test-fixtures/v3-backup';
 import { deliveryNow } from './creationDelivery.fixture';
 import { creationProjectionScenario } from './creationProjection.fixture';
 
-/** Uses the existing signed creation → two-provider inspection → D1 projection fixture.
- * RPC responses/admission are synthetic, but the real Worker adapters and P-256/ECDSA run. */
 export async function backupScenario() {
   const f = await creationProjectionScenario();
   await f.run();

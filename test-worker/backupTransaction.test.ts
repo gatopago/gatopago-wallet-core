@@ -28,8 +28,7 @@ afterEach(async () => {
   await clean();
 });
 const signal = () => new AbortController().signal;
-// These transport unit scenarios supply synthetic fresh evidence; the coordinator
-// suite separately exercises the real pinned, two-provider security inspection.
+
 const freshEvidence = async () => Math.floor(Date.now() / 1000) + 30;
 const row = (id: string) =>
   env.WALLET_DB.prepare('SELECT * FROM account_backup_transactions WHERE operation_id = ?')
@@ -215,7 +214,7 @@ async function scenario() {
   const begin = () => repo().beginSend(claim, policy, raw, Math.floor(Date.now() / 1000) + 30);
   const broadcast = (abort = signal()) =>
     broadcastBackupTransaction(repo(), claim, policy, raw, peers, abort, freshEvidence);
-  // Setup's chain observation is synthetic. Broadcast tests replace it only AFTER consent.
+
   const baseFetch = async (_url: unknown, init?: RequestInit): Promise<Response> => {
     const request = JSON.parse(String(init?.body)) as {
       id: number;
@@ -350,7 +349,7 @@ describe('backup nonce, persistence and bounded broadcast', { timeout: 20_000 },
     const f = await scenario();
     await f.reserve();
     await f.begin();
-    // Caller loses the D1 acknowledgement: no network effect is assumed or retried.
+
     vi.spyOn(Date, 'now').mockReturnValue(f.claim.until * 1000);
     expect(await f.repo().claim(f.id)).toBeNull();
     expect(await f.repo().observationGrant(f.id)).toMatchObject({ transactionHash: f.hash });

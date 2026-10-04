@@ -89,7 +89,8 @@ describe('private Wallet Core identity service', () => {
     expect((await worker.fetch(await request(), env)).status).toBe(404);
     const service = new WalletIdentity(createExecutionContext(), {
       ...env,
-      GATOPAGO_ENVIRONMENT: 'unsupported' as unknown as WalletCoreV3Bindings['GATOPAGO_ENVIRONMENT'],
+      GATOPAGO_ENVIRONMENT:
+        'unsupported' as unknown as WalletCoreV3Bindings['GATOPAGO_ENVIRONMENT'],
     });
     expect((await service.fetch(await request())).status).toBe(503);
     expect((await run(new Request('https://wallet-identity.internal/session'))).status).toBe(404);

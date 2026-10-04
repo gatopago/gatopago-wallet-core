@@ -31,8 +31,7 @@ function observation(s: Awaited<ReturnType<typeof seedMoneyDelivery>>, revert = 
       block_number: f.context.checkpoint.block_number,
       block_timestamp: String(f.now),
     };
-  // The synthetic evidence is assessed at f.now; pin its consuming clock too.
-  // Real D1/crypto work can cross a second boundary before reconcile starts.
+
   vi.spyOn(Date, 'now').mockReturnValue(f.now * 1000);
   return {
     status: 'observed' as const,

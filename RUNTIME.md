@@ -49,7 +49,7 @@ El mapa privado de endpoints debe proporcionar:
 The selected transport is `self`: Wallet Core sends `EntryPoint.handleOps`
 through the first RPC, without a public bundler endpoint. Both RPCs check the
 simulation, nonce and operator balance. `PRIVATE_KEY` funds the outer transaction;
-the independently signed paymaster authorization pays the UserOperation from its
+the paymaster authorization, signed by the same operator, pays the UserOperation from its
 EntryPoint deposit. Sponsored creation does not require ETH in the new account.
 The verification ceiling is 750,000 gas for creation and 496,000 for transfers.
 The outer transaction ceiling is 2,000,000 gas and cannot expand user authorization.
@@ -83,12 +83,12 @@ paymaster: {
 }
 ```
 
-Los límites del ejemplo son ilustrativos, no una política activada. La clave
-correspondiente a `signer` se suministra únicamente mediante
-`WALLET_PAYMASTER_SIGNER_KEY`; debe estar separada de owner y deployer. Antes de
-emitir cada autorización se comprueban en ambos RPC la red, el bytecode,
-EntryPoint, signer, límite contractual distinto de cero y depósito suficiente
-para esa operación. La estimación de la operación firmada sigue siendo obligatoria.
+The example limits are illustrative, not an activated policy. The configured
+signer uses the existing `PRIVATE_KEY` secret: the deployment wallet also signs
+gas sponsorship and relays operations. No additional wallet or secret is created.
+Before each authorization, both RPCs check the network, bytecode, EntryPoint,
+signer, nonzero contract cost cap and sufficient deposit. Exact signed-operation
+simulation remains mandatory.
 
 Orden: comprobar propiedad y operación → reservar presupuesto → firmar patrocinio
 → mostrar operación exacta → firma del usuario → estimar/enviar → confirmar con
@@ -119,8 +119,9 @@ Sepolia uses `0x702bae7BDda0cB9caA40B97D082CcF8BA17c0cCD`, deployed at
 balances, not a guarantee of remaining funds. An empty map does not activate
 sponsorship. Each entry uses the policy fields above:
 `address`, `codeHash`, `signer`, gas limits, maximum cost and daily budgets.
-Do not put private keys in this file. `WALLET_PAYMASTER_SIGNER_KEY` is a Worker
-secret and must match the policy signer, separately from the relayer key.
+Do not put private keys in this file. The existing `PRIVATE_KEY` Worker secret
+must match the policy signer. Arbitrum Sepolia uses the deployment wallet
+`0x75464f762bc50d0A0B127ab5a085504BF102Bb88`; there is no separate sponsor key.
 
 Consumer creation requires sponsorship. Missing configuration is rejected
 before chain inspection or preparing a new creation operation, with no silent

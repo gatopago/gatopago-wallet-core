@@ -12,7 +12,6 @@ import { finalityPin, finalityPolicyFixture } from '@gatopago/test-fixtures/v3-f
 import { creationGas, deliveryNow, seedCreationDelivery } from './creationDelivery.fixture';
 import { rpcReply } from '../test/rpc.fixture';
 
-/** Full private pipeline, real D1 and ephemeral P256 grants; synthetic RPC evidence. */
 export async function creationJobsScenario() {
   const inspection = creationInspectionScenario();
   const f = await seedCreationDelivery(undefined, {
@@ -59,7 +58,7 @@ export async function creationJobsScenario() {
           data: call.data,
         }).functionName;
       } catch {
-        /* Other ABI */
+        /* empty */
       }
       try {
         accountMethod = decodeFunctionData({
@@ -67,7 +66,7 @@ export async function creationJobsScenario() {
           data: call.data,
         }).functionName;
       } catch {
-        /* Other ABI */
+        /* empty */
       }
       if (securityMethod === 'securitySnapshot')
         return encodeFunctionResult({

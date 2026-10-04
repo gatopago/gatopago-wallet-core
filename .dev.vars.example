@@ -11,11 +11,8 @@ WALLET_RPC_ENDPOINTS="{}"
 # Optional operator key for backup gas sponsorship, never a user ADMIN key.
 WALLET_BACKUP_SIGNER_KEY=""
 
-# Dedicated GatoPagoPaymaster sponsor key; never reuse an account or deployment key.
-# Consumer signup requires it and a verified policy in config/paymasters.json.
-WALLET_PAYMASTER_SIGNER_KEY=""
-
-# Dedicated EOA for direct EntryPoint.handleOps delivery, separate from paymaster/backup keys.
+# Existing deployment wallet: relays handleOps and signs paymaster gas authorizations.
+# Must match the signer in config/paymasters.json. Never a user account key.
 PRIVATE_KEY=""
 
 GATOPAGO_WEB_ORIGIN=""

@@ -148,15 +148,13 @@ describe(
         .run();
       const claim = await f.journal().claim(f.id);
       expect(claim).not.toBeNull();
-      await f
-        .journal()
-        .append(claim!, {
-          status: 'unavailable',
-          transaction_hash: f.grant.transactionHash,
-          provider_ids: ['provider-one', 'provider-two'],
-          finality: 'not_assessed',
-          account_readiness: 'not_assessed',
-        });
+      await f.journal().append(claim!, {
+        status: 'unavailable',
+        transaction_hash: f.grant.transactionHash,
+        provider_ids: ['provider-one', 'provider-two'],
+        finality: 'not_assessed',
+        account_readiness: 'not_assessed',
+      });
       f.fetch.mockClear();
       const result = await repo(f).read(f.request.id, f.id);
       expect(result.observation).toMatchObject({

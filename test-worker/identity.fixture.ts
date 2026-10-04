@@ -15,7 +15,6 @@ const cacheKey = 'https://gatopago-wallet-core.invalid/firebase-public-jwks';
 export const projectId = 'v3-runtime-test';
 export const unixNow = () => Math.floor(Date.now() / 1000);
 
-/** Ephemeral synthetic JWT signer. Never a credential for any actual Firebase project. */
 export async function testIdentitySigner() {
   const key = await generateKeyPair('RS256', { modulusLength: 2048 });
   const jwk = {
