@@ -20,7 +20,6 @@ function currentProtocol(config: Environment, accounts: readonly AccountReleaseC
   };
 }
 
-/** Only the current protocol is accepted. Contract admission comes from the route's pinned catalog. */
 export function requireCurrentProtocol(
   request: Request,
   config: Environment,
@@ -61,7 +60,6 @@ export function requireCurrentProtocol(
   return response;
 }
 
-/** Declares the current protocol and admitted contracts; no release negotiation or readiness claim. */
 export function clientProtocolRoute(
   request: Request,
   config: Environment,

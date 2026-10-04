@@ -12,8 +12,6 @@ interface Configuration extends Omit<CreationDeliveryConfiguration, 'profiles'> 
   readonly networks: readonly BackupObservationNetwork[];
 }
 
-/** Internal job callable from a durable runner, never from an arbitrary-address HTTP
- * request. No signer/key/budget is needed to reconcile a transaction already sent. */
 export async function processBackupObservation(
   database: D1Database,
   id: ResourceId<'operation'>,
@@ -48,7 +46,6 @@ export async function processBackupObservation(
     result.status === 'observed' &&
     JSON.stringify(previous) !== JSON.stringify(result.observation)
   ) {
-    // Two agreeing providers cannot rewrite an already finalized outcome silently.
     result = Object.freeze({
       ...result,
       finality: 'reorg_detected',

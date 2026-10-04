@@ -23,8 +23,6 @@ const denied = (): never => {
 };
 const ttl = 30;
 
-// Use the same ordered source in the initial read and atomic write. This prevents
-// a new/reassigned/reconfigured account from racing a completed RPC inspection.
 const accountSet = `SELECT json_group_array(json_object(
   'id',id,'wallet_id',wallet_id,'network_id',network_id,'address',address,
   'deployment_state',deployment_state,'deployment_manifest_sha256',deployment_manifest_sha256,
@@ -100,10 +98,6 @@ function snapshot(json: string | null, scope: WebAuthnScope): Snapshot | null {
   }
 }
 
-/** Refresh application access, never financial authority. Caller must first prove
- * possession (WebAuthn login) or verify a signed session. No public lookup uses it.
- * Only a full, fresh inspection may disable absent keys. RPC failure changes nothing.
- */
 export async function refreshUserAccess(
   database: D1Database,
   userId: string,
@@ -141,7 +135,7 @@ export async function refreshUserAccess(
   const records: Record<string, unknown>[] = JSON.parse(accountsJson);
   if (!Array.isArray(records) || records.length > 128 || credentialResult.results.length > 128)
     return unavailable();
-  // A user who has had onchain access cannot return to onboarding by deleting rows.
+
   if (!records.length) return previous ? unavailable() : { expiresAt: now() + ttl };
   const hash = sha256(stringToHex(accountsJson)),
     registered = new Set(credentialResult.results.map((r) => r.public_key));
@@ -155,7 +149,7 @@ export async function refreshUserAccess(
     )
   ) {
     signal.throwIfAborted();
-    return { expiresAt: current.expires_at }; // A cached read performs no writes and never extends expiry.
+    return { expiresAt: current.expires_at };
   }
   if (!current || current.account_set_hash !== hash || current.expires_at <= now()) {
     const keys = new Set<Hex>(),
@@ -163,7 +157,6 @@ export async function refreshUserAccess(
     const started = now();
     let expires = started + ttl;
     for (const row of records) {
-      // Archiving a wallet hides it in the app; it does not remove its onchain ADMIN.
       const account = parseWalletAccount(row, true);
       const profiles = structuredClone(await abortable(resolve(account, signal), signal));
       const evidence = await abortable(inspectWalletAccount(account, profiles, signal), signal);

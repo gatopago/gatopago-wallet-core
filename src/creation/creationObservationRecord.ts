@@ -136,8 +136,7 @@ export function resultJson(value: unknown, grant: Grant): string {
     finality: result.finality,
     account_readiness: 'not_assessed',
   };
-  // Only trusted observer output enters this internal repository. The digest detects
-  // storage drift, not a compromised database operator; this is not an inclusion proof.
+
   const json = JSON.stringify(
     result.status === 'observed'
       ? {

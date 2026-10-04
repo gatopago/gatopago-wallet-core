@@ -20,8 +20,6 @@ interface Configuration extends Omit<CreationDeliveryConfiguration, 'profiles'> 
   readonly networks: readonly Network[];
 }
 
-/** Internal durable observer. Admission of endpoints/operators/networks is external
- * to this service; no configuration comes from a public request. Not a sending job. */
 export async function processCreationObservation(
   database: D1Database,
   id: ResourceId<'operation'>,
@@ -85,7 +83,6 @@ export async function processCreationObservation(
       result.observation.block_number !== finalizedReceipt.block_number ||
       result.observation.block_timestamp !== finalizedReceipt.block_timestamp)
   ) {
-    // Two agreeing RPCs must not silently rewrite a historically finalized identity.
     const evidence = result.finality_evidence;
     result = Object.freeze({
       ...result,

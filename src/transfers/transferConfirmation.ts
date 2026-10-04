@@ -20,11 +20,6 @@ import { TransferNonceReservationRepository } from './transferNonceReservation';
 import { TransferPreparationRepository } from './transferPreparations';
 import { writeTransferDraft } from '@gatopago/shared/v3/transfer-review-record';
 
-/** Confirmation restores economic context exclusively from the owned draft.
- * Browser inputs are its locator, reviewed digest and public-key proofs, never
- * balances/policy/nonce/costs. Profiles and scope are internal admission.
- * Re-observe the original block without extending the signed validity window.
- * Current-head checks and signed simulation still precede actual delivery. */
 export async function confirmOwnedTransfer(
   database: D1Database,
   identityInput: Principal,
@@ -53,8 +48,7 @@ export async function confirmOwnedTransfer(
     const stored = await drafts().readOwned(walletId, accountId, preparationId);
     const { candidate, review } = stored;
     if (candidate.digest !== reviewedDigest) throw new Error('TRANSFER_REVIEW_MISMATCH');
-    // Reject invalid proof sets before spending RPC capacity. Full authorization
-    // repeats verification with live evidence and checks expiry after crypto.
+
     await verifyTransferQuorum(candidate.digest, review.policy, scope, proofs);
     const prior = await new TransferNonceReservationRepository(
       database,

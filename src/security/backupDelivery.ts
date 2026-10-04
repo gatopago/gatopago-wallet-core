@@ -85,10 +85,6 @@ function delivery(row: Row) {
   });
 }
 
-/** Private outbox authority. NOT a public endpoint, user session, current chain-state
- * assertion or transport admission. All cryptographic data is rebuilt from immutable
- * consent. Caller supplies server-pinned profiles, never data received in a queue.
- * No private key, fabricated Firebase session or module-global I/O is involved. */
 export class BackupDeliveryRepository {
   private readonly db: D1DatabaseSession;
   private readonly configuration: CreationDeliveryConfiguration;
@@ -237,7 +233,7 @@ export class BackupDeliveryRepository {
     if (!result.success || ![0, 1].includes(result.meta.changes)) throw invalid();
     return result.meta.changes === 1;
   }
-  /** Private, validated lifecycle view for the runner; never a spending decision. */
+
   async status(id: ResourceId<'operation'>) {
     const r = await this.load(id);
     return Object.freeze({
@@ -247,7 +243,7 @@ export class BackupDeliveryRepository {
       kind: r.commit ? ('commit' as const) : ('prepare' as const),
     });
   }
-  /** Bounded, environment-scoped discovery. IDs only, no session/proof in queue payloads. */
+
   async due(limit = 20) {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50) throw invalid();
     const time = now();
@@ -312,9 +308,7 @@ export class BackupDeliveryRepository {
       throw new Error('BACKUP_LEASE_LOST');
     return Object.freeze({ id, token, until, record: fresh });
   }
-  /** Private scheduler supplies an admitted operator and independently observed nonce/fees.
-   * A unique D1 constraint arbitrates concurrent consumers, across all users in this D1.
-   * An interrupted signer may only retry this same envelope; reservations never auto-expire. */
+
   async reserveTransaction(
     claim: BackupDeliveryClaim,
     policy: BackupSponsorPolicy,
@@ -356,8 +350,7 @@ export class BackupDeliveryRepository {
       throw new Error('BACKUP_SPONSOR_RESERVATION_CONFLICT');
     return existing;
   }
-  /** Returns the reserved request only for the current lease and still-valid grant.
-   * No auto-nonce/fee refresh after an ambiguous signer response. */
+
   async transactionRequest(claim: BackupDeliveryClaim, policy: BackupSponsorPolicy) {
     const g = this.guard(claim.record),
       time = now();
@@ -401,9 +394,7 @@ export class BackupDeliveryRepository {
       throw invalid();
     }
   }
-  /** Must follow private network/sponsor admission and simulation. Raw bytes are verified
-   * against the durable reservation and saved atomically with their LOCAL hash. A true
-   * return is a send marker, NEVER finality, installed policy or spend readiness. */
+
   async beginSend(
     claim: BackupDeliveryClaim,
     policy: BackupSponsorPolicy,
@@ -475,7 +466,7 @@ export class BackupDeliveryRepository {
         .bind(claim.id, claim.token),
     );
   }
-  /** Provider acknowledgement, not a receipt, finality, installed policy or readiness. */
+
   async accepted(
     claim: NonNullable<Awaited<ReturnType<BackupDeliveryRepository['claim']>>>,
     hash: Hex,
@@ -490,13 +481,11 @@ export class BackupDeliveryRepository {
         .bind(now(), claim.id, claim.token, now(), hash),
     );
   }
-  /** Previously sent work must remain observable after consent expiry/revocation.
-   * This read cannot produce a new send lease or activate any wallet. */
+
   async observationGrant(id: ResourceId<'operation'>) {
     const r = await this.load(id);
     if (!['sending', 'uncertain', 'accepted'].includes(r.state.state)) return null;
-    // Historical evidence uses the immutable reservation, not today's sponsor key/budget.
-    // Rotating an operator or expiring consent cannot erase a previously sent transaction.
+
     const row = await this.db
       .prepare('SELECT * FROM account_backup_transactions WHERE operation_id = ?')
       .bind(id)

@@ -11,14 +11,10 @@ export interface InspectionProfile {
   readonly digest: Hex;
   readonly rpcUrls: readonly [string, string];
   readonly finalityPolicy: FinalityPolicyPin;
-  /** Chosen by trusted chain/finality policy, never HTTP params or an old success. */
+
   readonly finalityEvidence: FinalityAssessment;
 }
 
-/** Internal integration, not a public arbitrary-address RPC proxy. The eventual network
- * admission layer supplies profiles/checkpoints. No real profile is admitted by this helper.
- * Ownership is read first; every derivation is compared BEFORE sending any RPC request.
- */
 export async function inspectOwnedWalletAccount(
   repository: Pick<WalletRepository, 'ownedAccount'>,
   walletId: ResourceId<'wallet'>,
@@ -38,14 +34,11 @@ export async function inspectOwnedWalletAccount(
   return { wallet_id: walletId, wallet_account_id: accountId, ...observation };
 }
 
-/** Chain read for an already validated identity. Access and post-read ownership checks
- * belong to the caller; this function alone never makes an account publicly receivable. */
 export async function inspectWalletAccount(
   owned: Awaited<ReturnType<WalletRepository['ownedAccount']>>,
   trustedProfiles: readonly InspectionProfile[],
   signal: AbortSignal,
 ) {
-  // Detach before I/O; a mutable request/config object must not change a pin mid-inspection.
   const profiles = trustedProfiles.map((profile) =>
     Object.freeze({
       ...profile,
@@ -89,7 +82,6 @@ export async function inspectWalletAccount(
   );
   if (Math.floor(Date.now() / 1000) >= observation.security_expires_at)
     throw new Error('SECURITY_FINALITY_UNUSABLE');
-  // No projection update or activation follows inspection. Unknown/deployed are observations,
-  // not authorization, spend-readiness, proof of an honest RPC or cross-chain security sync.
+
   return observation;
 }

@@ -119,9 +119,7 @@ export class RegistrationRepository {
     const now = nowSeconds();
     if (now >= attempt.expires_at) return unavailable();
     const userId = attempt.proposed_user_id;
-    // The first insert is the admission gate. All following writes depend on that
-    // exact user/credential pair, inside the same D1 transaction. Constraint failures
-    // roll back the username, credential and invitation together.
+
     try {
       const result = await this.db.batch([
         this.db

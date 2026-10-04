@@ -32,8 +32,7 @@ const changed = (r: D1Result) => {
   if (!r.success || ![0, 1].includes(r.meta.changes)) throw new Error('BACKUP_JOB_STORAGE');
   return r.meta.changes === 1;
 };
-/** Scoped queue hints. All mutations fence by token and SQLite lease time; proofs,
- * provider URLs and signer authority never travel in messages. */
+
 export class BackupJobRepository {
   private readonly db: D1DatabaseSession;
   private readonly environment: Environment['environment'];

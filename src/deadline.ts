@@ -1,5 +1,3 @@
-/** Request-local deadline with deterministic timer/listener disposal. AbortSignal.timeout
- * leaves a live timer until expiry even when a fast RPC has already completed. */
 export async function withDeadline<T>(
   parent: AbortSignal,
   milliseconds: number,
@@ -24,8 +22,7 @@ export async function withDeadline<T>(
     parent.removeEventListener('abort', cancel);
   }
 }
-/** Stop waiting on cancellation even when a provider ignores its signal.
- * The underlying operation still needs the signal to cancel its own I/O. */
+
 export function abortable<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
   return new Promise((resolve, reject) => {
     const abort = () => {

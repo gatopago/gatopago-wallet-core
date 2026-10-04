@@ -17,10 +17,6 @@ import { observeTransferReceipt } from './transferReceiptObservation';
 import type { readTransferReview } from '@gatopago/shared/v3/transfer-review-record';
 import { TransferJobRepository, parseTransferWake, type TransferWake } from './transferJobs';
 
-/** Private read-only observation. The transaction is a hint, not payment evidence.
- * No timeout, missing receipt or reverted execution releases reservations here.
- * Profiles are operator-admitted configuration, never caller-supplied HTTP data.
- */
 export async function observeOwnedTransfer(
   database: D1Database,
   identityInput: Principal,
@@ -50,9 +46,6 @@ export async function observeOwnedTransfer(
   return observeTransferSource(database, operationId, source, transaction, profilesInput, signal);
 }
 
-/** Internal consumer access uses a live lease and admitted environment/profile, not
- * a synthetic user session. It has no path to the sender or reservation release.
- */
 export async function observeTransferJob(
   database: D1Database,
   environment: Environment['environment'],
@@ -162,10 +155,10 @@ async function observeTransferSource(
     } catch {
       result = { ...base(), status: 'unavailable' };
     }
-    // Recheck even on null/error: user revocation or loss of the job lease fails closed.
+
     const current = await source();
     deadline.throwIfAborted();
-    // Internal typed records contain bigint operation fields (not JSON wire data).
+
     const snapshot = (value: typeof original) =>
       JSON.stringify(value, (_key, item: unknown) =>
         typeof item === 'bigint' ? item.toString() : item,

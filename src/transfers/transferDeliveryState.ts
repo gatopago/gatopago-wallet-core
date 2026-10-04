@@ -23,10 +23,6 @@ export interface TransferDeliveryEvidence {
   readonly holds: Awaited<ReturnType<TransferNonceReservationRepository['deliveryFundsSnapshot']>>;
 }
 
-/** Internal read-only check after historical quorum verification. These values
- * must come from admitted observers and the owned reservation repository, NOT
- * HTTP input. No mutation, re-pricing, signature renewal, lease or broadcast.
- */
 export function assertTransferDeliveryState(
   record: Awaited<ReturnType<typeof readTransferReview>>,
   input: TransferDeliveryEvidence,

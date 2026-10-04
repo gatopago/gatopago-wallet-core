@@ -51,9 +51,6 @@ function page(search: URLSearchParams, kind: ResourceKind) {
   };
 }
 
-/** Consumer identity/read boundary, not a signing or wallet-enrollment endpoint.
- * Configuration comes from the versioned environment, never request JSON/headers.
- */
 export async function walletReadRoute(
   request: Request,
   env: AuthBindings,
@@ -147,8 +144,7 @@ export async function walletReadRoute(
       );
     if (isContext) {
       await repository.ownedAccount(walletId!, accountId!);
-      // Identity pins need no balance/finality RPC. Session access is still
-      // checked above; this projection never enables receiving or spending.
+
       return respond(
         200,
         await readOwnedAccountContext(
@@ -195,7 +191,7 @@ export async function walletReadRoute(
       }[error.code];
       return respond(status, { error_code: error.code });
     }
-    // Do not expose token, Firebase claims, SQL errors, commitments or provider diagnostics.
+
     return respond(503, { error_code: 'SERVICE_UNAVAILABLE' });
   }
 }

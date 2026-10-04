@@ -33,10 +33,6 @@ class DeliveryError extends Error {
   }
 }
 
-/** Internal job authority is the stored, verified operation grant, never a fabricated
- * Firebase session or a JWT placed on a queue. Construction is not network admission.
- * Bind only to a private consumer/scheduler after environment/profile admission.
- */
 export class CreationDeliveryRepository {
   private readonly db: D1DatabaseSession;
   private readonly configuration: CreationDeliveryConfiguration;
@@ -115,8 +111,7 @@ export class CreationDeliveryRepository {
         row.auth_cutoff > operation.authTime,
     };
   }
-  /** Read-only reconciliation must continue after grant expiry/session revocation: a
-   * previously sent operation can still have an economic outcome. Never grants a send. */
+
   async observationGrant(id: ResourceId<'operation'>) {
     const record = await this.load(id);
     if (!record.environmentMatches) throw new WalletAccessError('NOT_FOUND');
@@ -139,7 +134,7 @@ export class CreationDeliveryRepository {
       record.authTime,
     ] as const;
   }
-  /** Bounded sweep catches missed wake-ups; it returns identifiers, not JWTs or signatures. */
+
   async due(limit = 20) {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50)
       throw new Error('Invalid sweep limit');
@@ -161,8 +156,7 @@ export class CreationDeliveryRepository {
     const record = await this.load(id),
       now = nowSeconds(),
       delivery = record.delivery;
-    // A crash after the send marker is ambiguous even if the HTTP call never happened.
-    // Never turn this back into pending: reconciliation, not automatic rebroadcast, follows.
+
     if (
       delivery.state === 'sending' &&
       typeof delivery.until === 'number' &&

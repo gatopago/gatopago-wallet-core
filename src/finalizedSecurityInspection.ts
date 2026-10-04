@@ -12,16 +12,10 @@ import { createInspectionClient, inspectWalletSecurity } from './chainInspection
 interface Input extends Omit<AccountInspectionInput, 'checkpoint'> {
   readonly rpcUrls: readonly string[];
   readonly finalityPolicy: FinalityPolicyPin;
-  /** Trusted observer output, never an HTTP body or an old D1 success fallback. */
+
   readonly finalityEvidence: FinalityAssessment;
 }
 
-/** Read security at the recent COMMON FINALIZED checkpoint, not at an old creation
- * receipt or caller-chosen height. Recheck consensus after the account reads and
- * retain the earlier expiry. No observation here proves factor possession, matches
- * a desired signed security history, enables deposits/spending, or admits a network.
- * Provider/operator independence is checked by admission outside this helper.
- */
 export async function inspectFinalizedWalletSecurity(input: Input, signal: AbortSignal) {
   const document = input.document,
     expectedDigest = input.expectedDigest;
@@ -73,7 +67,7 @@ export async function inspectFinalizedWalletSecurity(input: Input, signal: Abort
     urls,
     deadline,
   );
-  // Never let slow account/RPC reads renew or extend the evidence that selected this block.
+
   fresh(source);
   deadline.throwIfAborted();
   const closing = await assessCheckpointFinality(

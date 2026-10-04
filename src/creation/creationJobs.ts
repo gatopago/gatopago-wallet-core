@@ -40,16 +40,12 @@ export function parseCreationWake(value: unknown): CreationWake {
   });
 }
 
-/** Private durable work, scoped to admitted profiles AND the application environment.
- * Queues are hints. D1 leases fence old/duplicate messages, while the delivery
- * repository separately fences the external send. No JWT or proof leaves D1.
- */
 export class CreationJobRepository {
   private readonly db: D1DatabaseSession;
   private readonly pins: readonly string[];
   private readonly environment: Environment['environment'];
   constructor(database: D1Database, configuration: CreationDeliveryConfiguration) {
-    new CreationDeliveryRepository(database, configuration); // Validate/detach trusted scope and pins.
+    new CreationDeliveryRepository(database, configuration);
     this.environment = configuration.environment;
     this.pins = Object.freeze(configuration.profiles.map((p) => p.digest));
     this.db = database.withSession('first-primary');
@@ -140,8 +136,7 @@ export class CreationJobRepository {
         .run(),
     );
   }
-  /** A failed enqueue may already have succeeded remotely. Invalidate its token;
-   * any late message is harmless. Never release a consumer's already-running lease. */
+
   async fail(input: CreationWake, state: 'queued' | 'running') {
     const message = parseCreationWake(input),
       now = nowSeconds();

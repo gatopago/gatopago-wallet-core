@@ -29,7 +29,6 @@ import moneyGas from '../../config/money-gas.json';
 
 type Owned = Awaited<ReturnType<WalletRepository['ownedAccount']>>;
 
-/** Composed once per invocation: no global clients, secrets, I/O or mutable evidence. */
 export function createWalletRuntime(
   env: WalletCoreV3Bindings,
   environment: Environment,
@@ -112,7 +111,7 @@ export function createWalletRuntime(
   try {
     moneyConfiguration = configureMoney(application, aaveMarket, networks, moneyGas);
   } catch {
-    /* Monetary admission is isolated from existing identity/transfer routes. */
+    // Optional money module configuration
   }
   const moneyProfiles: readonly (MoneyDeliveryProfile & {
     environment: Environment['environment'];
@@ -175,8 +174,7 @@ export function createWalletRuntime(
         signal.throwIfAborted();
         const network = byPin(pin),
           paymaster = network.paymaster;
-        // Reviewed upper bounds, not a simulated price or permission to charge.
-        // Include all admitted paymaster gas when sponsorship is configured.
+
         return maximumOperationGasCost({
           ...network.creationGas,
           ...(paymaster
@@ -191,8 +189,7 @@ export function createWalletRuntime(
         signal.throwIfAborted();
         const terms = byPin(pin).creationGas;
         if (maximumGasCharge(terms) > cap) throw new Error('CREATION_GAS_CAP_EXCEEDED');
-        // These are reviewed upper bounds, not an unsigned simulation. The selected transport
-        // must simulate the exact signed operation within them before delivery.
+
         return { ...terms, maximumGasCharge: cap };
       },
     }),

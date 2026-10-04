@@ -1,0 +1,13 @@
+{
+  "eip155:421614": {
+    "address": "0x702bae7BDda0cB9caA40B97D082CcF8BA17c0cCD",
+    "codeHash": "0xb31d78b41bf9d7c25cce6c92d230142bfb8c0b049ab2e6bf2c9502f38b20e587",
+    "signer": "0x6BbD85aaa67bFd74fB60Fc035A477d7a0D7bD195",
+    "verificationGasLimit": "100000",
+    "postOpGasLimit": "0",
+    "maximumCostWei": "200000000000000",
+    "dailyGwei": 10000000,
+    "userDailyGwei": 1000000,
+    "userDailyOperations": 10
+  }
+}

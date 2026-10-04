@@ -3,8 +3,6 @@ import { writeExecutionOperationRecord } from '../execution/executionOperationRe
 import { simulateOperation, type OperationTransport } from '../execution/operationTransport';
 import { withDeadline } from '../deadline';
 
-/** Exact signed bytes, preserving every user-approved gas cap and call. An
- * estimate is never an execution receipt or a fresh authority observation. */
 export async function simulateMoneyOperation(
   input: Awaited<ReturnType<typeof readMoneyReview>>,
   transportInput: OperationTransport,

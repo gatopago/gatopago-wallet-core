@@ -19,8 +19,7 @@ function changed(result: D1Result): number {
   if (!result.success || ![0, 1].includes(result.meta.changes)) throw invalid();
   return result.meta.changes;
 }
-/** Durable read-only job state. Records policy-scoped finality, not account readiness.
- * No method sends, creates an instance or changes the immutable delivery grant. */
+
 export class CreationObservationJournal {
   private readonly db: D1DatabaseSession;
   private readonly grants: CreationDeliveryRepository;
@@ -30,7 +29,7 @@ export class CreationObservationJournal {
     this.environment = configuration.environment;
     this.db = database.withSession('first-primary');
   }
-  /** Also finds sends whose wake-up was lost, without copying JWTs into job state. */
+
   async due(limit = 20) {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50)
       throw new Error('Invalid observation sweep limit');
@@ -121,8 +120,7 @@ export class CreationObservationJournal {
         result.finality_evidence.assessed_at > now)
     )
       throw invalid();
-    // One D1 transaction: append first, then advance the head iff THIS lease appended.
-    // Stale workers and duplicate acknowledgements update zero rows in both statements.
+
     const writes = await this.db.batch([
       this.db
         .prepare(
@@ -175,8 +173,7 @@ export class CreationObservationJournal {
     if (writes.length !== 2 || changed(writes[0]) !== changed(writes[1])) throw invalid();
     return writes[0].meta.changes === 1;
   }
-  /** Internal read model: current uncertainty never falls back to a historical success.
-   * Identity/ownership must still be checked by any future user-facing route. */
+
   async latest(id: ResourceId<'operation'>) {
     const grant = await this.grants.observationGrant(id);
     if (!grant) return null;
@@ -213,8 +210,7 @@ export class CreationObservationJournal {
       result: value,
     });
   }
-  /** Only a previously observed transaction is a reusable hint. Untrusted bundler hints
-   * from disagreement/missing/unavailable records cannot pin future reconciliation. */
+
   async knownTransaction(id: ResourceId<'operation'>): Promise<Hex | undefined> {
     const grant = await this.grants.observationGrant(id);
     if (!grant) return undefined;
@@ -243,8 +239,7 @@ export class CreationObservationJournal {
     requireHash(value.transaction_hash);
     return value.transaction_hash;
   }
-  /** Historical finalized evidence is an invariant to recheck, not current authority.
-   * An intervening RPC failure must not erase a previously finalized block identity. */
+
   async lastFinalizedReceipt(id: ResourceId<'operation'>) {
     const grant = await this.grants.observationGrant(id);
     if (!grant) return null;

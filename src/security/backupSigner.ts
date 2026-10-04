@@ -5,17 +5,14 @@ import { verifyBackupTransaction, type prepareBackupTransaction } from './backup
 type Transaction = ReturnType<typeof prepareBackupTransaction>;
 export interface BackupSigner {
   readonly operator: Transaction['operator'];
-  /** Private sign-only capability. Remote implementations must honor signal and use
-   * (operationId, transaction.unsignedHash) as their immutable idempotency identity. */
+
   readonly sign: (
     operationId: ResourceId<'operation'>,
     transaction: Transaction,
     signal: AbortSignal,
   ) => Promise<unknown>;
 }
-/** Captures only the local account's signing method; no keystore, secret loading,
- * WalletClient, provider or broadcast. The caller owns environment/key admission.
- * Local fixtures inject ephemeral accounts. This does not provision a live signer. */
+
 export function localBackupSigner(
   account: Pick<LocalAccount, 'address' | 'signTransaction'>,
 ): BackupSigner {

@@ -13,9 +13,6 @@ import { recordTransferJobFinality } from './transferJobFinality';
 import { TransferJobRepository, parseTransferWake, type TransferWake } from './transferJobs';
 import { writeTransferReview } from '@gatopago/shared/v3/transfer-review-record';
 
-/** One bounded reconciliation under internal job authority. All evidence is read
- * here; no HTTP proof, fabricated login, resend, signing or fee estimation.
- */
 export async function reconcileTransferJob(
   database: D1Database,
   environment: Environment['environment'],
@@ -159,8 +156,7 @@ export async function reconcileTransferJob(
         writeTransferReview(source.record.review).digest,
       )
       .first<{ operation_id: string }>();
-    // The trigger has closed the lease too. Do not require a running lease after
-    // this atomic commit or reinterpret a lost response as permission to resend.
+
     if (row?.operation_id !== message.operation_id) throw new Error('TRANSFER_JOB_COMMIT_CHANGED');
     return {
       state: 'reconciled' as const,

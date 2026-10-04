@@ -1,7 +1,5 @@
 import type { Principal } from './principal';
 
-/** Predicate for the authenticated user alias `u`, including credential revocation.
- * Use inside the write transaction as well as before slow RPC/cryptographic work. */
 export const AUTHORIZED_USER = `u.environment = ? AND u.id = ?
   AND u.disabled_at IS NULL AND u.auth_not_before <= ? AND ? > unixepoch()
   AND EXISTS (SELECT 1 FROM webauthn_credentials login_key WHERE login_key.id = ?

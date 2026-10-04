@@ -79,7 +79,6 @@ export function createTransferJobHandlers(resolve: (env: Bindings) => Configurat
               if (outcome.state === 'waiting') await jobs.defer(message, 30);
               if (outcome.state === 'review' && (await jobs.review(message, outcome.reason)))
                 review++;
-              // Reconciliation itself atomically finishes the durable job.
             }
           } catch {
             failed++;

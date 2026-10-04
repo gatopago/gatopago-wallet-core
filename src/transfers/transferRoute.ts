@@ -33,9 +33,6 @@ const allowedHeaders = ['Authorization', 'Content-Type', ...Object.values(CLIENT
 export const isTransferCommandPath = (path: string) => PATH.test(path);
 type Profile = TransferPreflightProfile & { readonly environment: Environment['environment'] };
 
-/** App-only transport. Resolver is trusted server policy for actual estimation
- * and finality; no body/header can provide it. Empty default admission remains
- * closed. GET restores a draft without RPC; POST never accepts a financial context. */
 export function createTransferRoute(dependencies: {
   readonly accessProfiles?: ReceivingProfiles;
   readonly relayerKey?: `0x${string}`;
@@ -164,7 +161,7 @@ export function createTransferRoute(dependencies: {
         };
         const view = (stored: Awaited<ReturnType<TransferPreparationRepository['readOwned']>>) => {
           const encoded = writeTransferDraft(stored.review);
-          // Canonical public-key review bytes, no saved signatures/JWT/RPC URLs.
+
           return {
             schema_version: 1,
             preparation_id: stored.id,

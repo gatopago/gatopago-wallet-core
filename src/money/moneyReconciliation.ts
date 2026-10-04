@@ -10,8 +10,6 @@ import { MoneyJobRepository, parseMoneyWake, type MoneyWake } from './moneyJobs'
 import { observeMoneySource } from './moneyObservation';
 import type { MoneyDeliveryProfile } from './moneyPreflight';
 
-/** Entire proof is read under an internal lease. HTTP bodies cannot insert a
- * receipt/finality journal, move a balance floor or release a spend lock. */
 export async function reconcileMoneyJob(
   database: D1Database,
   environment: Environment['environment'],
@@ -224,7 +222,7 @@ export async function reconcileMoneyJob(
         proof.expires_at,
       )
       .first<{ operation_id: string }>();
-    // Reconciliation trigger closes operation, lock, balance floor and job atomically.
+
     if (committed?.operation_id !== message.operation_id)
       throw new Error('MONEY_JOB_COMMIT_CHANGED');
     return {

@@ -177,7 +177,7 @@ describe('V3 Consumer session and ownership with real D1', () => {
       '/wallets',
       `/wallets/${createResourceId('wallet')}/accounts`,
     ]) {
-      expect((await exports.default.fetch(await input(path))).status).toBe(503);
+      expect((await exports.default.fetch(await input(path))).status).toBe(409);
     }
     expect(await countIdentities()).toBe(0);
   });

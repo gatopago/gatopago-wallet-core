@@ -42,11 +42,7 @@ export const arbitrumSepolia = {
       decimals: 6,
     },
   },
-  // Caps for signed-operation estimation; exact signed-operation simulation remains a live check.
-  // Native P256 creation rejected 496k with AA13 on both RPCs; 750k passed
-  // exact handleOps eth_call with synthetic prefunding. This is the self
-  // transport ceiling, not public bundler admission or a completed creation.
-  // Existing prepared operations retain their separately stored signed terms.
+
   creationGas: {
     verificationGasLimit: '750000',
     callGasLimit: '100000',
@@ -62,7 +58,7 @@ export const arbitrumSepolia = {
     maxPriorityFeePerGas: '0',
   },
   backupSponsor: null,
-  paymaster: null, // Populate only with verified deployment evidence and a dedicated sponsor key.
+  paymaster: null,
 };
 
 export default function catalog(environment: Environment) {

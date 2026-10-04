@@ -57,8 +57,6 @@ function bytes(value: unknown, max: number): Hex {
 const topic = (name: (typeof operationReceiptAbi)[number]['name']) =>
   encodeEventTopics({ abi: operationReceiptAbi, eventName: name })[0];
 
-/** Delimit one validated execution within handleOps. This verifies consistency,
- * never RPC honesty, code identity, finality or the domain's financial effects. */
 export function verifyUserOperationReceipt(
   binding: OperationReceiptBinding,
   transactionHash: Hex,

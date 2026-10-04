@@ -25,11 +25,6 @@ import {
 } from '@gatopago/shared/v3/transfer-review-record';
 import { BALANCE_FLOOR_CURRENT, floorValues } from '../execution/spendCheckpoint';
 
-/** Request-owned primary D1 session. A claim is NOT signature verification
- * or a send grant. Holds only coordinate this service, not external spending.
- * Caller must pass a freshly verified authorization from the private
- * coordinator; this is never an HTTP body API.
- */
 export class TransferNonceReservationRepository {
   private readonly db: D1DatabaseSession;
   private readonly identity: Principal;
@@ -41,7 +36,6 @@ export class TransferNonceReservationRepository {
     this.db = database.withSession('first-primary');
   }
   private owner(walletId: ResourceId<'wallet'>, accountId: ResourceId<'walletAccount'>) {
-    // Each revalidation starts on primary, rather than reusing an older read bookmark.
     return new WalletRepository(this.database, this.identity).ownedAccount(walletId, accountId);
   }
   private async liveFunds(accountId: ResourceId<'walletAccount'>, network: string, now: number) {
@@ -67,7 +61,7 @@ export class TransferNonceReservationRepository {
     });
     return { rows, totals, fingerprint: rows.map((row) => `${row.id}:${row.checksum}`).join(',') };
   }
-  /** For the private balance/quote coordinator. Explicit zeros, never SQL float sums. */
+
   async reservedFunds(
     walletId: ResourceId<'wallet'>,
     accountId: ResourceId<'walletAccount'>,
@@ -88,8 +82,7 @@ export class TransferNonceReservationRepository {
       amount_atomic: (snapshot.totals.get(asset_id) ?? 0n).toString(),
     }));
   }
-  /** Private snapshot for pre-dispatch checks. The future lease transition MUST
-   * compare this fingerprint atomically; this read does not acquire a lease. */
+
   async deliveryFundsSnapshot(
     walletId: ResourceId<'wallet'>,
     accountId: ResourceId<'walletAccount'>,
@@ -136,11 +129,7 @@ export class TransferNonceReservationRepository {
       send_enabled: false as const,
     });
   }
-  /** Private one-winner transition BEFORE any broadcast. The raw claim token is
-   * returned only once and never persisted/logged. Losing the response requires
-   * reconciliation, not a fresh claim or expiry-based release of funds.
-   * Input is the internal preflight result, never an HTTP payload.
-   */
+
   async beginDelivery(
     walletId: ResourceId<'wallet'>,
     accountId: ResourceId<'walletAccount'>,
@@ -245,9 +234,9 @@ export class TransferNonceReservationRepository {
         proof.reservation_fingerprint,
       )
       .first<{ id: string }>();
-    // RETURNING identifies this row; meta.changes also counts the durable-job trigger.
+
     if (result?.id !== proof.operation_id) throw new Error('TRANSFER_DELIVERY_CONCURRENT_CHANGE');
-    // If this recheck fails, keep the durable uncertainty marker. Never unclaim.
+
     const current = await this.owner(walletId, accountId),
       finished = Math.floor(Date.now() / 1000);
     if (
@@ -268,8 +257,7 @@ export class TransferNonceReservationRepository {
       send_enabled: false as const,
     });
   }
-  /** One-use dispatch boundary. Persist BEFORE external I/O. A lost response or
-   * abort after this write is uncertain and cannot consume the same token again. */
+
   async consumeDelivery(
     walletId: ResourceId<'wallet'>,
     accountId: ResourceId<'walletAccount'>,
@@ -476,10 +464,7 @@ export class TransferNonceReservationRepository {
       throw new Error('TRANSFER_FUNDS_CHANGED');
     }
     const id = createResourceId('operation');
-    // The batch is atomic; a database error rolls back expiry and insertion together.
-    // Only the same wallet account is touched by this request. A future sender
-    // MUST transition to a different durable state before any external I/O;
-    // this expiry path is exclusively for never-dispatched claims.
+
     const results = await this.db
       .batch<Record<string, unknown>>([
         this.db
@@ -550,7 +535,7 @@ export class TransferNonceReservationRepository {
         throw error;
       });
     if (results.some((r) => !r.success)) throw new Error('TRANSFER_RESERVATION_FAILED');
-    // Recheck session/ownership after a concurrent revocation before exposing even a claim locator.
+
     const current = await this.owner(walletId, accountId);
     const finishedAt = Math.floor(Date.now() / 1000);
     if (
@@ -569,8 +554,7 @@ export class TransferNonceReservationRepository {
       row.deployment_manifest_sha256 !== a.deployment_digest
     )
       throw new Error('TRANSFER_RESERVATION_CONFLICT');
-    // A separately produced valid assertion for the same consent must not replace
-    // the first stored signature. Restore the original bytes on every retry.
+
     readTransferOperationRecord(row.operation_json, row.operation_sha256, binding);
     await checkDraft();
     return {
@@ -581,9 +565,6 @@ export class TransferNonceReservationRepository {
     };
   }
 
-  /** Private, owned restoration. No HTTP serialization and no dispatch authority.
-   * Historical expiry is returned as state, never silently extended by a read.
-   */
   async findOwnedByConsent(
     walletId: ResourceId<'wallet'>,
     accountId: ResourceId<'walletAccount'>,

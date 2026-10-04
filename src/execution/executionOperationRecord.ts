@@ -70,10 +70,6 @@ function encode(operation: Operation) {
   });
 }
 
-/** Byte-integrity and cross-field checks only, NOT fresh quorum/policy/funds
- * verification. The private sender must revalidate those before any broadcast.
- * Hashes detect corruption; a database hash is not an independent attestation.
- */
 export function readExecutionOperationRecord(
   json: unknown,
   digest: unknown,
@@ -190,9 +186,6 @@ export function readExecutionOperationRecord(
   return Object.freeze({ operation, plan: Object.freeze(plan) });
 }
 
-/** Only already-deployed operations with explicitly encoded sponsorship are supported. Reject
- * factory/delegation fields instead of silently omitting authority.
- */
 export function writeExecutionOperationRecord(
   operation: Operation,
   binding: ExecutionRecordBinding,

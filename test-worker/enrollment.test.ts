@@ -101,7 +101,7 @@ describe('V3 authenticated credential inventory', () => {
   const read = async (subject = 'test-user-a') => run(await input(PATH, {}, subject, 'GET'));
   it('is mounted but unprovisioned runtime remains closed', async () => {
     expect((await exports.default.fetch(await input(PATH, {}, 'test-user-a', 'GET'))).status).toBe(
-      503,
+      409,
     );
   });
   it('requires admission and includes the passkey used at signup', async () => {
@@ -430,7 +430,7 @@ describe('V3 owner-only credential details', () => {
 
 describe('V3 passkey enrollment: identity is not monetary authority', () => {
   it('mounts the endpoint but actual unprovisioned configuration remains closed', async () => {
-    expect((await exports.default.fetch(await input())).status).toBe(503);
+    expect((await exports.default.fetch(await input())).status).toBe(409);
     expect(await count()).toBe(0);
   });
   it('requires a prior session; a GET never prepares or creates anything', async () => {

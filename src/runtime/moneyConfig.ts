@@ -42,8 +42,6 @@ export function parseMoneyApplication(value: unknown) {
   });
 }
 
-/** Keep monetary admission separate: a bad/expired money configuration must not
- * replace identity, stored history or the legacy network configuration. */
 export function configureMoney(
   applicationInput: unknown,
   marketInput: unknown,

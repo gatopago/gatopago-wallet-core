@@ -71,8 +71,6 @@ export function maximumGasCharge(terms: Omit<CreationGasTerms, 'maximumGasCharge
   );
 }
 
-/** Public, reviewed catalog selects contracts, assets and budgets. Secret bindings
- * supply only endpoint credentials and the optional gas sponsor's signing key. */
 export function configureWalletNetworks(
   catalog: unknown,
   environment: Environment,
@@ -298,3 +296,16 @@ export function configureWalletNetworks(
   }
 }
 export type WalletNetwork = ReturnType<typeof configureWalletNetworks>[number];
+
+export function sponsorshipConfigured(
+  network: { paymaster?: { signer: string } },
+  key: string | undefined,
+): boolean {
+  if (!network.paymaster || !key || key.length !== 66 || !key.startsWith('0x')) return false;
+  try {
+    const account = privateKeyToAccount(key as Hex);
+    return account.address.toLowerCase() === network.paymaster.signer.toLowerCase();
+  } catch {
+    return false;
+  }
+}

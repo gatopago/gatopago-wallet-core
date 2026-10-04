@@ -25,10 +25,6 @@ function address(value: unknown): Address {
 const topic = (name: (typeof transferReceiptAbi)[number]['name']) =>
   encodeEventTopics({ abi: transferReceiptAbi, eventName: name })[0];
 
-/** Raw execution receipt consistency, not RPC honesty/finality or a database
- * settlement transition. Caller restores the signed review and verifies pinned
- * chain/EntryPoint/account code at the canonical receipt block independently.
- */
 export function verifyTransferReceipt(
   record: Awaited<ReturnType<typeof readTransferReview>>,
   transactionHash: Hex,

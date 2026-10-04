@@ -12,7 +12,6 @@ export function v3Json(status: number, body: object, origin?: string): Response 
   return Response.json(body, { status, headers });
 }
 
-/** Call after origin and resource validation, before authentication or mutation. */
 export function allowMethods(
   request: Request,
   origin: string,

@@ -36,8 +36,7 @@ import { readAssertionRecord, writeAssertionRecord } from '@gatopago/shared/v3/a
 
 type Row = Record<string, unknown>;
 type Owned = Awaited<ReturnType<WalletRepository['ownedAccount']>>;
-/** Server-only admission/finality resolver; never a request body or a persisted success.
- * It must assess a fresh common finalized checkpoint for the owned, pinned network. */
+
 export type BackupProfiles = (
   owned: Owned,
   signal: AbortSignal,
@@ -68,10 +67,6 @@ export class BackupError extends Error {
 const now = () => Math.floor(Date.now() / 1000);
 const invalid = () => new WalletAccessError('WALLET_DATA_INVALID');
 
-/** Owner-scoped optional backup enrollment, with separate prepare and commit consents.
- * Authorization atomically records durable delivery work. No HTTP broadcast, automatic
- * nonce retry, onchain execution, projection backup or receive/spend admission occurs here.
- * Instantiate per request. The default profile resolver denies all networks. */
 export class BackupRepository {
   private readonly db: D1DatabaseSession;
   private readonly wallets: WalletRepository;
@@ -127,8 +122,7 @@ export class BackupRepository {
     reviewed?: FinalityAssessment['target'],
   ) {
     signal.throwIfAborted();
-    // Use the same detached server admission for state inspection and acknowledgement.
-    // The resolver's caller must not be able to replace an RPC/policy between those awaits.
+
     const profiles = structuredClone(await this.resolveProfiles(c.owned, signal));
     const observed = await inspectOwnedWalletAccount(
       this.wallets,
@@ -164,8 +158,7 @@ export class BackupRepository {
     if (now() >= expires) throw new BackupError('BACKUP_EXPIRED');
     return { ...observed, security_expires_at: expires, acknowledgement };
   }
-  /** SQL rechecks ownership, session cutoff, exact identity, original consent/key and deployment
-   * pins at the write, not merely in an earlier RPC/GET. No database snapshot grants money rights. */
+
   private guard(c: Awaited<ReturnType<BackupRepository['context']>>) {
     const o = c.owned,
       i = c.initial;
@@ -240,8 +233,7 @@ export class BackupRepository {
       spend_enabled: false as const,
     });
   }
-  /** Internal owned restoration for UI composition. No RPC, writes, renewal or private proof
-   * disclosure. The original input allows the caller to independently reconstruct challenges. */
+
   async read(id: ResourceId<'operation'>) {
     parseResourceId('operation', id);
     await this.wallets.getSession();
@@ -340,7 +332,7 @@ export class BackupRepository {
     signal: AbortSignal,
   ) {
     parseResourceId('operation', id);
-    // Canonical serialization copies every mutable signature buffer before the first await.
+
     const authorizationJson = backupProofs(owner, enrollments),
       proof = readBackupProofs(authorizationJson);
     signal.throwIfAborted();
@@ -353,8 +345,7 @@ export class BackupRepository {
       return this.receipt(record);
     }
     if (now() >= record.input.validUntil) throw new BackupError('BACKUP_EXPIRED');
-    // Reject unrelated/missing proofs before expensive RPC, but do not persist until the
-    // fresh chain state and expiry checks below agree with the exact signed proposal.
+
     let signed: Awaited<ReturnType<typeof authorizeBackupEnrollment>>;
     try {
       signed = await authorizeBackupEnrollment(record.input, proof.owner, proof.enrollments, now());
@@ -390,7 +381,7 @@ export class BackupRepository {
         ...guard.values,
       )
       .run();
-    // D1 counts consent + trigger-inserted outbox + durable scheduling job.
+
     if (!result.success || ![0, 3].includes(result.meta.changes)) throw invalid();
     const stored = await this.decode(await this.select(id).first<Row>());
     if (stored.authorizedAt === null || stored.authorizationJson !== authorizationJson)
@@ -438,7 +429,7 @@ export class BackupRepository {
       spend_enabled: false as const,
     });
   }
-  /** Signing metadata for the same review after reload, never a proof-bearing execution grant. */
+
   async readCommit(id: ResourceId<'operation'>) {
     parseResourceId('operation', id);
     await this.wallets.getSession();

@@ -157,7 +157,7 @@ export class LoginRepository {
     } catch {
       return denied();
     }
-    // Possession is verified before any chain work; enrollment alone cannot log in.
+
     if (
       !this.refresh &&
       (await this.db

@@ -14,9 +14,6 @@ import { observeAavePosition } from '../portfolio/aavePositionObservation';
 import type { MoneyObservationSource } from './moneyObservation';
 import type { MoneyDeliveryProfile } from './moneyPreflight';
 
-/** No inner UserOperationEvent exists when handleOps itself reverts. The exact
- * private envelope plus finalized expiry and unchanged EntryPoint nonce prove
- * nonexecution. The operator's actual outer gas is not an account charge. */
 export async function observeMoneyOuterRevert(
   database: D1Database,
   source: MoneyObservationSource,
@@ -119,9 +116,7 @@ export async function observeMoneyOuterRevert(
     network_id: manifest.network_id,
     genesis_hash: manifest.genesis_hash,
   });
-  // Pick a deterministic checkpoint: the receipt block if already expired, or
-  // the first later block past expiry. A newer finality head must not change the
-  // immutable receipt digest when a job restarts after writing its journal.
+
   async function header(number: bigint) {
     const blocks = await Promise.all(
       clients.map(async (client) => {

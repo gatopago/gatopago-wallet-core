@@ -10,8 +10,6 @@ export function budgetUnits(wei: bigint) {
   return Number(units);
 }
 
-/** One conditional INSERT serializes admission across all Workers. No in-memory counters.
- * A timeout after signing never releases a reservation: those bytes may still execute. */
 export class SponsorshipBudget {
   private readonly db: D1DatabaseSession;
   constructor(database: D1Database) {
@@ -119,7 +117,7 @@ export class SponsorshipBudget {
       .first();
     if (row?.userop_hash !== hash) throw new Error('SPONSOR_RESERVATION_CONFLICT');
   }
-  /** Call only after the existing two-RPC finalized-receipt validation. Reverts also consume gas. */
+
   async settle(hash: Hex, actualWei: bigint, transactionHash: Hex) {
     requireHash(hash);
     requireHash(transactionHash);
@@ -134,7 +132,7 @@ export class SponsorshipBudget {
         actual_wei: string | null;
         transaction_hash: string | null;
       }>();
-    if (!row) return; // Account-funded operations have no reservation.
+    if (!row) return;
     if (
       actualWei < 0n ||
       actualWei > BigInt(row.maximum_wei) ||

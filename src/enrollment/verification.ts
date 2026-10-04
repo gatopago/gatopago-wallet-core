@@ -60,10 +60,6 @@ function object(input: unknown, fields: string[]): Record<string, unknown> {
   return input as Record<string, unknown>;
 }
 
-/** Only the none/ES256 profile requested by Consumer. No remote attestation/MDS
- * fetch, trust in a client-supplied SPKI, or authenticator/vendor assertion.
- * Proof-of-possession uses the same codec and signature checks as Account V3.
- */
 export async function verifyEnrollment(
   input: unknown,
   expected: {
@@ -162,13 +158,13 @@ export async function verifyEnrollment(
       challenge: expected.proofChallenge,
       response: assertion,
     });
-    // A backup-capable credential cannot change its eligibility between these two ceremonies.
+
     const backupEligible = (assertion.authenticatorData[32] & 8) !== 0;
     if (backupEligible !== (info.credentialDeviceType === 'multiDevice')) return invalid();
     const signCount = new DataView(assertion.authenticatorData.buffer).getUint32(33, false);
     if ((signCount !== 0 || info.credential.counter !== 0) && signCount <= info.credential.counter)
       return invalid();
-    // Stable field order gives retries a content identity; caller JSON ordering is irrelevant.
+
     const responseHash = sha256(
       stringToHex(
         JSON.stringify([

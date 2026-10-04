@@ -11,7 +11,7 @@ import { rpcReply, type RpcRead } from './rpc.fixture';
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 const endpoint = 'https://rpc.example.test/private-fixture-key';
 const options = { retryCount: 0, dedupe: false } as const;
-const block = { method: 'eth_getBlockByNumber', params: ['0x64', false] } as const;
+const block = { method: 'eth_getBlockByNumber', params: ['0x64', false] as [`0x${string}`, boolean] } as const;
 const client = (signal = new AbortController().signal) => createInspectionClient(endpoint, signal, true);
 
 describe('bounded inspection JSON-RPC batches', () => {
@@ -48,8 +48,8 @@ describe('bounded inspection JSON-RPC batches', () => {
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 
-  it.each(['missing', 'duplicate', 'foreign-id', 'error', 'both', 'version', 'single-envelope'] as const)
-    ('rejects the entire %s batch without retrying or falling back', async fault => {
+  it.each(['missing', 'duplicate', 'foreign-id', 'error', 'both', 'version', 'single-envelope'] as const)(
+    'rejects the entire %s batch without retrying or falling back', async fault => {
       const fetch = vi.fn(async (_url, init) => {
         const requests = JSON.parse(String(init.body)) as RpcRead[];
         const rows: object[] = requests.map(row => ({ jsonrpc: '2.0', id: row.id, result: '0x1' }));

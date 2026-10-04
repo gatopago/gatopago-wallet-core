@@ -36,7 +36,6 @@ const fields =
   'id AS user_id,display_name,username,username_reserved_until,username_published_at,receiving_wallet_id';
 const now = () => Math.floor(Date.now() / 1000);
 
-/** Publication is separate from registration: a private reservation is not a deposit destination. */
 export class ProfileRepository {
   private readonly db: D1DatabaseSession;
   private readonly wallets: WalletRepository;
@@ -56,7 +55,7 @@ export class ProfileRepository {
       .bind(...authorizationValues(this.identity))
       .first<Profile>();
     if (!profile) throw new WalletAccessError('UNAUTHENTICATED');
-    // An expired private reservation is unavailable even before cron releases its row.
+
     if (
       profile.username_published_at === null &&
       profile.username_reserved_until !== null &&
@@ -152,8 +151,6 @@ export class ProfileRepository {
   }
 }
 
-/** An active policy must include enough registered, unrevoked passkeys to spend.
- * Session state alone, a deployment flag, or an old creation receipt is insufficient. */
 async function verifyReceiving(
   database: D1Database,
   userId: string,

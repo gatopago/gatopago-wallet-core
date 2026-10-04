@@ -10,8 +10,6 @@ type Row = Record<string, unknown>;
 type Signed = ReturnType<typeof authorizeCreationOperation>;
 const invalid = () => new WalletAccessError('WALLET_DATA_INVALID');
 
-/** Every joined value is read in ONE SELECT with the operation and owner. The
- * observer's latest head is not substituted with an older successful result. */
 export const creationLifecycleColumns = `j.state AS job_state, j.reason AS job_reason,
 	q.latest_epoch, r.result_json AS latest_json, r.result_sha256 AS latest_sha256,
 	r.observed_at AS latest_observed, r.user_op_hash AS latest_hash,

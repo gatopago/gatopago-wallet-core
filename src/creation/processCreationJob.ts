@@ -32,10 +32,6 @@ export interface CreationProcessorConfiguration extends Omit<
   ) => Promise<InspectionCheckpoint>;
 }
 
-/** Assemble the existing grant, send, two-provider observer and account projection.
- * This factory accepts server-owned admission ONLY. HTTP/queue bodies cannot choose
- * an endpoint, checkpoint, profile, fee, signature or owner. No activation is implied.
- */
 export function createCreationProcessor(configuration: CreationProcessorConfiguration) {
   const networks = configuration.networks.map((network) => {
     const profile = loadPinnedCreationProfile(network.document, network.digest);
@@ -131,7 +127,7 @@ export function createCreationProcessor(configuration: CreationProcessorConfigur
       let state = await lifecycle();
       if (state.state === 'pending') {
         if (state.expires <= now()) {
-          await grants.claim(id); // Expire without a fresh checkpoint, RPC or new send.
+          await grants.claim(id);
           return { state: 'complete', reason: 'expired' };
         }
         if (state.revoked) return { state: 'review', reason: 'revoked' };
@@ -152,7 +148,7 @@ export function createCreationProcessor(configuration: CreationProcessorConfigur
           signal,
         );
       } else if (state.state === 'sending' && state.lease <= now()) {
-        await grants.claim(id); // Interrupted sends become uncertain, NEVER pending.
+        await grants.claim(id);
       }
       state = await lifecycle();
       if (state.state === 'expired') return { state: 'complete', reason: 'expired' };
@@ -170,8 +166,7 @@ export function createCreationProcessor(configuration: CreationProcessorConfigur
       ) {
         return { state: 'complete', reason: 'projected' };
       }
-      // Projection retries first reuse a still-fresh committed observation. They never
-      // need another send or session, and stale evidence must instead be refreshed.
+
       const latest = await journal.latest(id);
       if (
         latest?.result.status === 'observed' &&

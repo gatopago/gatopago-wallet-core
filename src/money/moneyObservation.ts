@@ -19,8 +19,6 @@ export interface MoneyObservationSource {
   readonly userSaltCommitment: Hex;
 }
 
-/** Private source is either a real owner or a live internal job lease. A missing
- * receipt, disagreement or RPC failure never proves expiry or releases funds. */
 export async function observeMoneySource(
   database: D1Database,
   source: () => Promise<MoneyObservationSource>,
@@ -93,8 +91,7 @@ export async function observeMoneySource(
       );
       if (finality.status !== 'finalized' || !finality.checkpoint)
         return { status: 'observed' as const, receipt, finality, position: null };
-      // Re-observe the position at the inclusion block. Exact principal comes
-      // from the scoped USDC/Pool logs; interest-bearing balance deltas differ.
+
       const position = await observeAavePosition(
         {
           account: c.account,

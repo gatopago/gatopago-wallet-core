@@ -29,8 +29,6 @@ function evidence(json: unknown, digest: unknown, grant: BackupObservationGrant)
   return value;
 }
 
-/** Consumer read model. Ownership is checked before private grant reconstruction
- * and again before disclosure. This class has no RPC, queue, signer or write path. */
 export class BackupStatusRepository {
   private readonly db: D1DatabaseSession;
   private readonly owned: BackupRepository;
@@ -61,8 +59,7 @@ export class BackupStatusRepository {
     const record = await ownedRead();
     if (record.backup_id !== backupId) throw new WalletAccessError('NOT_FOUND');
     const expected = { backupId, operationId: id, kind, proposalHash: record.proposal_hash };
-    // One SELECT snapshots job, outbox, latest observation and historical projection.
-    // A newer uncertain head is never replaced by the projection's successful source.
+
     const row = await this.db
       .prepare(
         `SELECT b.state AS delivery_state,b.transaction_hash,b.kind,
@@ -87,7 +84,7 @@ export class BackupStatusRepository {
     if (row) {
       if (row.kind !== kind) throw invalid();
       const state = await this.grants.status(id);
-      // A changing sender can be retried by GET; never compose mismatching versions.
+
       if (state.state !== row.delivery_state || state.hash !== row.transaction_hash)
         throw invalid();
       const grant = await this.grants.observationGrant(id);

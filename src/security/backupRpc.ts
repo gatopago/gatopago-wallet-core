@@ -10,7 +10,7 @@ function quantity(value: unknown) {
     throw new Error('BACKUP_RPC_INVALID');
   return BigInt(value);
 }
-/** Per invocation, bounded JSON-RPC. No retries, cached promises or provider errors in logs. */
+
 export function backupTransport(url: string, signal: AbortSignal) {
   const endpoint = rpcEndpoint(url);
   let nextId = 0;
@@ -97,8 +97,7 @@ async function inspectSponsor(
   if (a.value.nonce !== b.value.nonce) throw new Error('BACKUP_NONCE_MISMATCH');
   return [a.value, b.value];
 }
-/** Independently observed nonce/gas, fixed private fee caps. Not a nonce allocator:
- * D1 must reserve the envelope BEFORE asking a sign-only adapter to sign it. */
+
 export async function quoteBackupTransaction(
   call: Parameters<typeof prepareBackupTransaction>[1],
   policy: BackupSponsorPolicy,
@@ -107,8 +106,7 @@ export async function quoteBackupTransaction(
 ) {
   const peers = validateRpcProviders(providers),
     sponsor = Object.freeze({ ...policy });
-  // The simulation ceiling also respects the execution budget; never silently clamp
-  // an actual estimate to an inadequate gas limit after simulation.
+
   const gasCeiling =
     sponsor.maxFeePerGas > 0n ? sponsor.maxExecutionFee / sponsor.maxFeePerGas : 0n;
   const ceiling = prepareBackupTransaction(sponsor.networkId, call, sponsor, {

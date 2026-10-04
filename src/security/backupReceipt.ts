@@ -48,8 +48,6 @@ function bytes(value: unknown, maxBytes: number): Hex {
   return value.toLowerCase() as Hex;
 }
 
-/** Exact receipt evidence for a privately restored, previously sent grant. Does not
- * authorize another transaction, assert RPC honesty/finality or enable spending. */
 export function verifyBackupReceipt(
   grant: BackupObservationGrant,
   rawTransaction: unknown,
@@ -224,9 +222,6 @@ export function verifyBackupReceipt(
   }
 }
 
-/** Rechecks canonical blocks and pinned code, including the proxy's current implementation.
- * Historical events are not current policy: a later operation in the same block may have
- * changed security again. Promotion requires a separate fresh security observation. */
 export async function observeBackupReceipt(
   client: PublicClient,
   grant: BackupObservationGrant,

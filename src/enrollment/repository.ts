@@ -17,9 +17,6 @@ type Row = Record<string, unknown>;
 type VerifiedEnrollment = Awaited<ReturnType<typeof verifyEnrollment>>;
 const freshNow = () => Math.floor(Date.now() / 1000);
 
-/** All instances/DB sessions are request-scoped. Pending attempts never reserve
- * a credential globally; a key becomes unique only after possession succeeds.
- */
 export class EnrollmentRepository {
   private readonly db: D1DatabaseSession;
   private readonly wallets: WalletRepository;
@@ -91,8 +88,7 @@ export class EnrollmentRepository {
   }
   async credentials() {
     const owner = await this.owner();
-    // Registration is capped at 16 per owner. A seventeenth row is a data
-    // inconsistency, not a silently truncated list. No cleanup/write on read.
+
     const rows = await this.db
       .prepare(
         `SELECT c.id,c.rp_id,c.origin,c.created_at,c.transports_json,
@@ -102,7 +98,7 @@ export class EnrollmentRepository {
       )
       .bind(owner, ...this.auth())
       .all<Row>();
-    await this.owner(); // Revocation/expiration during the read must not become an empty list.
+    await this.owner();
     try {
       if (!rows.success) throw new Error();
       const data = rows.results.map((row) => {
@@ -149,7 +145,7 @@ export class EnrollmentRepository {
       )
       .bind(id, owner, ...this.auth())
       .first<Row>();
-    await this.owner(); // Do not release key metadata after session revocation during the read.
+    await this.owner();
     if (!row) throw new WalletAccessError('NOT_FOUND');
     try {
       return parseCredentialDetail(
@@ -173,7 +169,6 @@ export class EnrollmentRepository {
       now = freshNow();
     const random = () => bytesToHex(crypto.getRandomValues(new Uint8Array(32)));
     await this.db.batch([
-      // Bounded to this authenticated owner; 24 starts/day also bounds retained rows.
       this.db
         .prepare(
           `DELETE FROM webauthn_enrollments WHERE user_id = ? AND created_at < ?

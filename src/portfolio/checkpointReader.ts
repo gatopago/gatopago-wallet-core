@@ -16,8 +16,6 @@ function rpcBytes(value: unknown): Hex {
   return value.toLowerCase() as Hex;
 }
 
-/** Invocation-local, bounded reader. Contract reads use an EIP-1898 canonical
- * block hash, with opening/closing chain fences. No signing or write methods. */
 export function checkpointReader(
   peerInput: RpcProvider,
   inputSource: {

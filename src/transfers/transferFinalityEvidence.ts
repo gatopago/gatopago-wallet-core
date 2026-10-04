@@ -7,9 +7,6 @@ import type { ResourceId } from '@gatopago/shared/v3/primitives';
 import type { observeOwnedTransfer } from './transferObservation';
 import type { readTransferReview } from '@gatopago/shared/v3/transfer-review-record';
 
-/** Evidence checks for the leased job's finality journal. This validates an
- * internal observation's binding/freshness, not the provenance of an HTTP body.
- */
 export function prepareTransferFinalityEvidence(
   stored: Awaited<ReturnType<typeof readTransferReview>>,
   operationId: ResourceId<'operation'>,

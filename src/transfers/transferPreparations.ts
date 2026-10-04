@@ -10,10 +10,6 @@ import { WalletRepository } from '../accounts/repository';
 import type { prepareOwnedTransfer } from './transferPreparation';
 import { readTransferDraft, writeTransferDraft } from '@gatopago/shared/v3/transfer-review-record';
 
-/** Private durable unsigned reviews. Scope/pins come from current admission.
- * No HTTP object is proof of preparation. This repository never signs, reserves
- * a nonce or broadcasts. At confirmation, retrieve this exact review and collect
- * independent live evidence; never accept a replacement context from the client. */
 export class TransferPreparationRepository {
   private readonly identity: Principal;
   private readonly scope: WebAuthnScope;
@@ -186,8 +182,7 @@ export class TransferPreparationRepository {
     )
       throw new Error('TRANSFER_PREPARATION_INVALID');
     const current = await this.owner(walletId, accountId);
-    // A newer login may remain valid while the earlier preparation's authTime
-    // is revoked. Checking the current owner alone would miss that transition.
+
     if (
       JSON.stringify(current) !== JSON.stringify(owned) ||
       JSON.stringify(await readRow()) !== JSON.stringify(row)

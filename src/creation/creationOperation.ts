@@ -33,8 +33,6 @@ export class CreationOperationError extends Error {
   }
 }
 
-// Canonical decimal storage, not a second implementation of gas limits or signing.
-// prepareCreationOperation validates every gas value and the user-approved upper bound.
 function writeGas(terms: CreationGasTerms): string {
   return JSON.stringify(creationGasWire(terms));
 }
@@ -45,11 +43,6 @@ function readGas(json: unknown): CreationGasTerms {
   return terms;
 }
 
-/** Request-scoped persistence for the exact first operation, not a network admission API.
- * Both proofs are reverified on owned reads. A retry never changes gas, calldata, signature,
- * nonce or lifetime. Authorization + outbox insertion commit in one D1 transaction.
- * No public route, RPC, queue delivery, wallet activation or legacy state is implied here.
- */
 export class CreationOperationRepository {
   private readonly db: D1DatabaseSession;
   private readonly initializations: InitializationRepository;
@@ -87,7 +80,7 @@ export class CreationOperationRepository {
   private decode(row: Row | null, initial: Initial) {
     return CreationOperationRepository.restoreRecord(row, initial);
   }
-  /** Pure restoration for an already scoped request or internal durable job. */
+
   static restoreRecord(row: Row | null, initial: Initial) {
     if (!row) throw new WalletAccessError('NOT_FOUND');
     try {
@@ -180,8 +173,7 @@ export class CreationOperationRepository {
   }
   async read(id: ResourceId<'operation'>) {
     const { initial, record } = await this.load(id);
-    // Internal only: allows deterministic client preview and eventual bounded dispatch.
-    // Signed expired bytes may be inspected, but must never be treated as permission to resend.
+
     return {
       ...this.receipt(record),
       input: initial.input,
@@ -191,9 +183,7 @@ export class CreationOperationRepository {
       signed: record.signed,
     };
   }
-  /** Exact owned preview for the separate operation-confirmation screen. The initial
-   * proof is necessary for deterministic factory bytes; operation signatures, outbox
-   * leases and full internal records never leave this boundary. No RPC or writes. */
+
   async preview(id: ResourceId<'operation'>) {
     parseResourceId('operation', id);
     const initial = await this.initializations.readAuthorized(id),
@@ -223,7 +213,7 @@ export class CreationOperationRepository {
   async prepare(id: ResourceId<'operation'>, terms: CreationGasTerms) {
     parseResourceId('operation', id);
     const gasJson = writeGas(terms),
-      frozenTerms = readGas(gasJson); // detach before ownership I/O
+      frozenTerms = readGas(gasJson);
     const initial = await this.initializations.readAuthorized(id);
     const existing = await this.select(id).first<Row>();
     if (existing) {
@@ -301,8 +291,7 @@ export class CreationOperationRepository {
       return this.receipt(record);
     }
     await this.owner();
-    // Authorization, outbox and wake-up share a transaction. Failure of any SQL
-    // statement rolls back all three. No trigger silently changes D1 meta.changes.
+
     const results = await this.db.batch([
       this.db
         .prepare(

@@ -14,8 +14,6 @@ import { MoneyRepository, moneyIdempotencyKey } from './moneyRepository';
 import type { MoneyPreparationProfile } from './moneyPreparation';
 import { moneyConfirmationDigest } from './moneyWire';
 
-/** SPEND verifies the exact stored review. HTTP provides public assertions, never
- * a replacement context, market, policy, nonce, fee or RPC provider. */
 export async function confirmOwnedMoney(
   database: D1Database,
   identityInput: Principal,

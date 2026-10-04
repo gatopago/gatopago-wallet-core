@@ -15,8 +15,6 @@ function fields(value: unknown, keys: readonly string[]): Record<string, unknown
   return value as Record<string, unknown>;
 }
 
-/** HTTP commands contain public policy and consent only. No caller-controlled RPC,
- * nonce, checkpoint, deployment pin, execution payload or finality assertion. */
 export function parseBackupRequest(value: unknown) {
   const r = fields(value, [
     'request_id',

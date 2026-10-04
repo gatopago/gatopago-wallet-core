@@ -3,8 +3,6 @@ import { requireHash } from '@gatopago/shared/v3/deployment';
 import { createInspectionClient, inspectWalletCreationProfile } from '../chainInspection';
 import type { WalletNetwork } from './config';
 
-/** Select a common finalized block, then independently validate its chain, age and
- * ancestry with both observers. All evidence is scoped to this invocation. */
 export async function networkFinality(
   network: Pick<WalletNetwork, 'providers' | 'deployment' | 'finalityPolicy'>,
   signal: AbortSignal,

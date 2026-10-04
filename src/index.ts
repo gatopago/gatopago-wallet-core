@@ -19,7 +19,6 @@ import { parseResourceId } from '@gatopago/shared/v3/primitives';
 import catalog from './runtime/catalog';
 import { createWalletRuntime } from './runtime';
 
-// The environment resolver is also explicit for in-process composition tests.
 export function createWalletWorker(configuration?: unknown, environment = configuredEnvironment) {
   return {
     async scheduled(_controller: ScheduledController, env: WalletCoreV3Bindings): Promise<void> {
@@ -82,8 +81,7 @@ export function createWalletWorker(configuration?: unknown, environment = config
         let runtime: ReturnType<typeof createWalletRuntime> | undefined;
         const walletRuntime = () =>
           (runtime ??= createWalletRuntime(env, config, configuration ?? catalog(config)));
-        // Identity and stored history remain readable if financial configuration is
-        // unavailable. Resolve providers only for the authenticated chain-read path.
+
         if (isProfilePath(path))
           return await profileRoute(request, env, config, (owned, signal) =>
             walletRuntime().receivingProfiles(owned, signal),
@@ -133,8 +131,7 @@ export function createWalletWorker(configuration?: unknown, environment = config
           const response = await resolved.creationOperation(request, env, config);
           if (ctx && response.ok && request.method === 'POST' && path.endsWith('/authorize')) {
             const id = parseResourceId('operation', path.split('/')[4]);
-            // A best-effort wake-up is not part of financial authorization. Cron
-            // recovers the durable job if this notification fails or is interrupted.
+
             ctx.waitUntil(
               resolved.jobs.creation.wake(env, id).catch(() => {
                 console.warn({ event: 'v3_creation_wake_failed' });

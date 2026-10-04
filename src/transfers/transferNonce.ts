@@ -18,10 +18,6 @@ const abi = parseAbi([
   'function getNonce(address sender, uint192 key) view returns (uint256 nonce)',
 ]);
 
-/** Internal observation only. Ownership, live finality and EntryPoint admission
- * precede this call. It does not allocate a nonce or inspect the pending mempool.
- * The sender's direct spendNonce is intentionally never queried here.
- */
 export async function observeTransferNonce(
   input: {
     network_id: NetworkId;

@@ -22,10 +22,6 @@ import { TransferNonceReservationRepository } from './transferNonceReservation';
 type Context = Parameters<typeof prepareTransferOperation>[1];
 type Approval = Parameters<typeof authorizeTransferOperation>[2];
 
-/** Internal admitted fee/gas limits, NOT an HTTP quote or estimation result.
- * The supplying fee/estimation policy must bind them to this precise request.
- * Signed preflight must subsequently prove the operation fits these limits.
- * Only the private sponsor service can replace the account gas budget with bound paymaster terms. */
 export interface TransferPreparationTerms {
   request: TransferRequest;
   wallet_account_id: ResourceId<'walletAccount'>;
@@ -39,10 +35,6 @@ export interface TransferPreparationTerms {
   expires_at: number;
 }
 
-/** Private preparation: only request/account ID are user inputs. Identity is
- * verified upstream; scope, profiles, finality and cost terms come from admission.
- * No persisted review, reservation, signature or broadcast is performed here.
- * The HTTP integration must persist this context, never accept it back as proof. */
 export async function prepareOwnedTransfer(
   database: D1Database,
   identityInput: Principal,
@@ -61,7 +53,7 @@ export async function prepareOwnedTransfer(
     terms = structuredClone(termsInput);
   assertWebAuthnScope(scope);
   const termsRequest = parseTransferRequest(terms.request);
-  // Fixed field order; input property order is not part of the economic request.
+
   const binding = (value: TransferRequest) =>
     JSON.stringify([
       value.schema_version,

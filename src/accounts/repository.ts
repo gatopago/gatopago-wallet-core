@@ -78,7 +78,7 @@ function account(row: Row) {
     network_id: network,
     generation: 3 as const,
     deployment_state: String(row.deployment_state),
-    // D1 is a projection. It must not expose an unverified deposit address or authorize a payment.
+
     spend_readiness: 'not_assessed' as const,
     receive_enabled: false as const,
   };
@@ -89,10 +89,6 @@ function pageResult<T extends { id: string }>(rows: Row[], page: Page, parse: (r
   return { data, next_cursor: rows.length > page.limit ? data.at(-1)!.id : null };
 }
 
-/** Created per request. All ownership reads start on primary and use a transactional batch.
- * Ownership is resolved from the authenticated user, never from a client-provided owner.
- * This repository does not enroll a signer, create an onchain account or reserve any funds.
- */
 export class WalletRepository {
   private readonly db: D1DatabaseSession;
   constructor(
@@ -165,7 +161,7 @@ export class WalletRepository {
       .prepare(`SELECT w.* FROM wallets w ${OWNERSHIP} WHERE ${AUTHORIZED_USER} AND w.id = ?`)
       .bind(...this.authValues(), id);
   }
-  /** Internal resolver for inspection/execution. Never serialize commitments/pins blindly to UI. */
+
   async ownedAccount(walletId: ResourceId<'wallet'>, accountId: ResourceId<'walletAccount'>) {
     const result = await this.read([
       this.sessionQuery(),
@@ -184,7 +180,6 @@ export class WalletRepository {
   }
 }
 
-/** Validates a persisted account identity; callers must separately establish access. */
 export function parseWalletAccount(row: Row, includeArchived = false) {
   try {
     const view = account(row);

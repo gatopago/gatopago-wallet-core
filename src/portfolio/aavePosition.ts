@@ -17,8 +17,6 @@ export interface AavePositionProfile extends BalanceProfile {
   readonly market: AaveMarketPin;
 }
 
-/** Owner-only observation. Financial readiness and pending spends are separate
- * from this read; finalized position amounts cannot authorize an operation. */
 export async function inspectOwnedAavePosition(
   repository: Pick<WalletRepository, 'ownedAccount'>,
   walletId: ResourceId<'wallet'>,

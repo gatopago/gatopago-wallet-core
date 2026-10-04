@@ -12,7 +12,7 @@ WALLET_RPC_ENDPOINTS="{}"
 WALLET_BACKUP_SIGNER_KEY=""
 
 # Dedicated GatoPagoPaymaster sponsor key; never reuse an account or deployment key.
-# Only used when an independently verified paymaster policy is admitted in runtime/catalog.ts.
+# Consumer signup requires it and a verified policy in config/paymasters.json.
 WALLET_PAYMASTER_SIGNER_KEY=""
 
 # Dedicated EOA for direct EntryPoint.handleOps delivery, separate from paymaster/backup keys.

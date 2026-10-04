@@ -22,11 +22,6 @@ interface Configuration extends Omit<CreationDeliveryConfiguration, 'profiles'> 
 type Row = Record<string, unknown>;
 const invalid = () => new WalletAccessError('WALLET_DATA_INVALID');
 
-/** Internal projection of an already consented, sent and finalized creation.
- * Never sends, invents a Firebase session, activates a security policy or admits a
- * network. A revoked login does not erase the economic result of an earlier send.
- * Historical projection is idempotent; spending/receiving still need fresh checks.
- */
 export async function processCreationProjection(
   database: D1Database,
   id: ResourceId<'operation'>,
@@ -153,8 +148,7 @@ export async function processCreationProjection(
     Object.values(security.security.nonces).some((nonce) => nonce !== '0')
   )
     throw new Error('CREATION_SECURITY_CHANGED');
-  // Restore the immutable, signed grant after slow I/O; never project from a stale
-  // combination of consent and RPC state. SQL below additionally pins the journal head.
+
   const currentGrant = await grants.observationGrant(id);
   if (
     !currentGrant ||
@@ -182,7 +176,7 @@ export async function processCreationProjection(
       owner.user_salt_commitment !== message.userSaltCommitment)
   )
     throw invalid();
-  // A second chain reuses the cryptographic identity and wallet; it is NOT a new account owner.
+
   const walletId =
     owner.id === null ? createResourceId('wallet') : parseResourceId('wallet', owner.id);
   const accountId = createResourceId('walletAccount');
@@ -194,8 +188,7 @@ export async function processCreationProjection(
     sourceDigest = deploymentDocumentDigest(sourceJson);
   const securityJson = JSON.stringify(security);
   if (securityJson.length > 16384) throw invalid();
-  // One transaction, same predicates for every insert. Concurrent head changes or
-  // another projector insert ZERO rows; uniqueness errors abort the entire batch.
+
   const from = `FROM account_initializations i JOIN users u ON u.id = i.user_id
 		JOIN account_creation_operations o ON o.initialization_id = i.id
 		JOIN account_creation_observation_jobs j ON j.initialization_id = i.id

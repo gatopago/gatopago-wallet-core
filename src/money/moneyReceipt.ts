@@ -20,9 +20,6 @@ const approvalTopic = encodeEventTopics({ abi: erc20Abi, eventName: 'Approval' }
 const supplyTopic = encodeEventTopics({ abi: aavePoolAbi, eventName: 'Supply' })[0];
 const withdrawTopic = encodeEventTopics({ abi: aavePoolAbi, eventName: 'Withdraw' })[0];
 
-/** Verify one recipe's principal effects inside the precise UserOperation slice.
- * Interest-bearing aToken Mint/Burn amounts are deliberately not interpreted as
- * principal. Code/proxy identity, post-position and finality remain mandatory. */
 export function verifyMoneyReceipt(
   record: Awaited<ReturnType<typeof readMoneyReview>>,
   transactionHash: Hex,

@@ -116,8 +116,6 @@ export async function simulateOperation(
 ) {
   validate(input);
   if (config.kind === 'self') {
-    // handleOps simulates the exact signed gas limits; the outer transaction has
-    // a separate operator budget. Success here is not proof of inner execution.
     await quoteBackupTransaction(
       { account: input.entryPoint, data: calldata(input, config.policy.operator), value: 0n },
       config.policy,
@@ -188,9 +186,7 @@ async function read(database: D1Database, hash: Hex) {
     .bind(hash)
     .first<Submission>();
 }
-/** Called only after the domain's durable dispatch grant. The immutable journal
- * pins transport and bytes. A process crash or provider switch never allocates a
- * second transaction for the same signed operation. No key is stored in D1. */
+
 export async function sendOperation(
   database: D1Database,
   config: OperationTransport,
@@ -230,9 +226,7 @@ export async function sendOperation(
         value: 0n,
       };
       const quoted = await quoteBackupTransaction(call, config.policy, config.providers, signal);
-      // Concurrent HTTP/Queue invocations may quote the same chain nonce. A unique
-      // D1 constraint arbitrates the reservation; losers sign again BEFORE any I/O
-      // that can broadcast. Never release/reuse a reserved nonce on a timeout.
+
       for (let attempt = 0; attempt < 8; attempt++) {
         validate(input);
         signal.throwIfAborted();
@@ -320,11 +314,7 @@ async function broadcast(stored: Submission, signal: AbortSignal) {
   );
   if (hash !== stored.transaction_hash) throw new Error('TRANSPORT_HASH');
 }
-/** Private job recovery only, after checking the domain's dispatch grant/lease.
- * An expired UserOperation still leaves an outer EOA nonce outstanding. Replaying
- * the exact envelope may revert in EntryPoint, consuming that nonce, but cannot
- * extend the signed authorization. Never signs, reprices or allocates a nonce.
- * Public receipt reads do not call this function. */
+
 export async function resumeSubmission(database: D1Database, hash: Hex, signal: AbortSignal) {
   requireHash(hash);
   const stored = await read(database, hash);
@@ -341,9 +331,7 @@ export async function resumeSubmission(database: D1Database, hash: Hex, signal: 
     }
   }
 }
-/** Private historical proof, never a broadcast grant. Reconstruct the exact
- * one-UserOp envelope and recover its signer before trusting a reverted outer
- * receipt. A bundler locator does not identify a private signed envelope. */
+
 export async function verifiedSelfSubmission(
   database: D1Database,
   input: TransportOperation,
@@ -393,11 +381,6 @@ export async function verifiedSelfSubmission(
   });
 }
 
-/** Private Cron transport recovery, independent of a domain job's timeout/review.
- * Only admitted operators are scanned, at most 20 envelopes per invocation in
- * nonce order. A confirmed nonce is a retry filter, NEVER financial evidence:
- * no balance, reservation, receipt or success state is changed here. Inconsistent
- * peers cause extra identical replays rather than skipping an unconsumed nonce. */
 export async function recoverSelfSubmissions(
   database: D1Database,
   config: Extract<OperationTransport, { kind: 'self' }>,
@@ -448,9 +431,7 @@ export async function recoverSelfSubmissions(
   }
   if (failed) console.warn({ event: 'v3_relayer_recovery_pending', count: failed });
 }
-/** Read-only transaction locator; callers still verify receipt and finality
- * through two independent execution RPCs. Uses the persisted transport even after
- * changing current providers. null means a recorded but not yet located send. */
+
 export async function submissionTransaction(database: D1Database, hash: Hex, signal: AbortSignal) {
   requireHash(hash);
   const stored = await read(database, hash);

@@ -24,7 +24,6 @@ export interface BalanceProfile extends Omit<InspectionProfile, 'rpcUrls'> {
   >;
 }
 
-/** Reviewed display registry only: no balance, finality or spending permission. */
 export function balanceAssetMetadata(profile: Pick<BalanceProfile, 'assetIds' | 'assetDisplay'>) {
   if (
     !Array.isArray(profile.assetIds) ||
@@ -51,10 +50,6 @@ export function balanceAssetMetadata(profile: Pick<BalanceProfile, 'assetIds' | 
   });
 }
 
-/** Authenticated internal read. No public address/profile/asset override, writes,
- * reservation or signing. An owned finalized balance is NOT a spendable budget:
- * security, pending debits, token semantics and fee policy remain separate gates.
- */
 export async function inspectOwnedWalletBalances(
   repository: {
     ownedAccount(
@@ -147,7 +142,7 @@ export async function inspectOwnedWalletBalances(
     fresh(closing);
     fresh(source);
     deadline.throwIfAborted();
-    // Ownership/session revocation or archive during RPC must discard all amounts.
+
     const current = await repository.ownedAccount(walletId, accountId);
     deadline.throwIfAborted();
     fresh(closing);

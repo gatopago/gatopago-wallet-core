@@ -7,8 +7,7 @@ type Bindings = Pick<WalletCoreV3Bindings, 'WALLET_DB' | 'CREATION_QUEUE_NAME'> 
   readonly CREATION_JOBS: Pick<Queue<CreationWake>, 'send'>;
 };
 type Resolver = (env: Bindings) => CreationProcessorConfiguration | null;
-/** No I/O survives an invocation in module state. Resolving admission is a private
- * composition concern, never a flag, URL or profile accepted from a message. */
+
 export function createCreationJobHandlers(resolve: Resolver) {
   return {
     async wake(env: Bindings, id?: ResourceId<'operation'>) {
@@ -16,7 +15,7 @@ export function createCreationJobHandlers(resolve: Resolver) {
       if (!admitted || !admitted.networks.length) return;
       const processor = createCreationProcessor(admitted),
         jobs = new CreationJobRepository(env.WALLET_DB, processor.configuration);
-      // One bounded sweep per scheduled invocation; no recursive drain loop.
+
       const ids = id ? [id] : await jobs.due(20);
       let failed = 0;
       for (const next of ids) {
@@ -43,8 +42,7 @@ export function createCreationJobHandlers(resolve: Resolver) {
       let failed = 0,
         malformed = 0,
         review = 0;
-      // Deliberately serial within a small batch. max_concurrency bounds the other
-      // invocations. D1 and delivery leases still protect overlapping/replayed calls.
+
       for (const item of batch.messages) {
         let message;
         try {
@@ -70,7 +68,7 @@ export function createCreationJobHandlers(resolve: Resolver) {
             failed++;
             await jobs.fail(message, 'running');
           }
-          // Durable next_attempt_at, not immediate queue retry, owns normal polling.
+
           item.ack();
         } catch {
           failed++;

@@ -23,7 +23,6 @@ export async function privateLimitKey(
   return [...new Uint8Array(signature)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
-/** One conditional write, never read-then-increment. Rejections do not extend a hold. */
 export async function consumeLimit(
   db: AuthBindings['WALLET_DB'],
   scope: LimitScope,
@@ -52,7 +51,6 @@ export async function consumeLimit(
 }
 
 export async function pruneLimits(db: AuthBindings['WALLET_DB'], now: number): Promise<void> {
-  // Bounded work; a malicious request cannot turn cleanup into an unbounded scan.
   const result = await db
     .prepare(
       `DELETE FROM auth_limits WHERE rowid IN

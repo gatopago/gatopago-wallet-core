@@ -20,9 +20,6 @@ interface Configuration extends Omit<CreationDeliveryConfiguration, 'profiles'> 
 type Row = Record<string, unknown>;
 const invalid = () => new Error('BACKUP_PROJECTION_INVALID');
 
-/** Confirm the installed policy against the ORIGINAL consent at a fresh finalized
- * checkpoint. Persistence records history, not permanent readiness or possession
- * of a factor. Every subsequent monetary operation still needs fresh authorization. */
 export async function processBackupProjection(
   database: D1Database,
   id: ResourceId<'operation'>,
@@ -85,7 +82,7 @@ export async function processBackupProjection(
       prior.evidence_expires_at <= prior.projected_at
     )
       throw invalid();
-    return 'already_projected' as const; // Historical receipt; never claims current readiness.
+    return 'already_projected' as const;
   }
   const source = await journal.latest(id),
     result = source?.result;
@@ -138,8 +135,7 @@ export async function processBackupProjection(
     ) {
       throw new Error('BACKUP_POLICY_CHANGED');
     }
-    // A newer correct policy cannot prove that the earlier receipt block survived.
-    // Revalidate that exact inclusion checkpoint after inspecting the current state.
+
     const receiptFinality = await assessCheckpointFinality(
       network.providers.map((p) => createInspectionClient(p.url, deadline)),
       {
@@ -172,8 +168,7 @@ export async function processBackupProjection(
       sourceJson = JSON.stringify(result),
       sourceDigest = deploymentDocumentDigest(sourceJson);
     if (json.length > 16384) throw invalid();
-    // Exact immutable transaction and observed head are checked again in the write.
-    // Current login revocation cannot erase an already completed economic operation.
+
     const saved = await db
       .prepare(
         `INSERT INTO account_backup_projections(operation_id,backup_id,source_epoch,source_sha256,

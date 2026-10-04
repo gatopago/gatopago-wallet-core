@@ -10,8 +10,6 @@ export const unavailableAccessProfiles: ReceivingProfiles = async () => {
   throw new IdentityError('IDENTITY_UNAVAILABLE');
 };
 
-/** Verify the token first, then refresh its user's access. Repositories recheck
- * credential version and the shorter evidence expiry on their reads/writes. */
 export async function verifyAppSession(
   request: Request,
   env: Pick<AuthBindings, 'WALLET_DB' | 'FIREBASE_PROJECT_ID' | 'GATOPAGO_ENVIRONMENT'>,

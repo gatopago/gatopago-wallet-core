@@ -19,10 +19,6 @@ function object(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-/** Recover a lost command response using a non-authorizing consent locator.
- * The reservation remains authoritative even after its preparation is purged.
- * Return only an unsigned review and the verified historical status. Reading
- * never confirms, dispatches, releases a reservation, or returns saved proofs. */
 export async function restoreOwnedTransfer(
   database: D1Database,
   identityInput: Principal,
@@ -54,8 +50,7 @@ export async function restoreOwnedTransfer(
     throw new Error('TRANSFER_STATUS_CHANGED');
   const { request, context, policy, scope, prepared_at } = stored.review;
   const draft = writeTransferDraft({ request, context, policy, scope, prepared_at });
-  // Resolve only after ownership/status checks. Reuse the reviewed runtime asset
-  // registry, never a current balance or caller-supplied decimals/provider data.
+
   const profiles = resolveProfiles();
   if (profiles.length > 32) throw new Error('TRANSFER_METADATA_UNAVAILABLE');
   const matches = profiles.filter((p) => p.digest === stored.candidate.deployment_digest);
@@ -81,10 +76,6 @@ export async function restoreOwnedTransfer(
   });
 }
 
-/** Authenticated historical view only. Never returns signed operations, claim
- * tokens, policy commitments or provider URLs; never refreshes RPC or sends.
- * Recorded finality is historical evidence, not spendable balance or settlement.
- */
 export async function readOwnedTransferStatus(
   database: D1Database,
   identityInput: Principal,

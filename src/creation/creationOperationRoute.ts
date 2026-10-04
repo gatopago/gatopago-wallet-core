@@ -30,10 +30,6 @@ const headers = ['Authorization', 'Content-Type', ...Object.values(CLIENT_RELEAS
 export const isCreationOperationPath = (path: string) => PATH.test(path);
 type Initial = Awaited<ReturnType<InitializationRepository['readAuthorized']>>;
 
-/** Server-owned composition only. Gas terms bind the pinned creation operation;
- * delivery estimates the signed operation. Admission comes from the runtime catalog.
- * This API records an outbox; it neither sends inline nor asserts deployment.
- */
 export function createCreationOperationRoute(dependencies: {
   readonly accessProfiles?: ReceivingProfiles;
   readonly profiles: readonly (CreationProfilePin & {
@@ -46,7 +42,7 @@ export function createCreationOperationRoute(dependencies: {
     identity: Principal,
     signal: AbortSignal,
   ) => GasSponsor | undefined;
-  /** Server-admitted ceiling for an empty preparation request. Not a spending grant. */
+
   readonly automaticGasCap?: (
     pin: CreationProfilePin,
     initial: Initial,
@@ -185,12 +181,18 @@ export function createCreationOperationRoute(dependencies: {
       signal.throwIfAborted();
       if (!match[2]) {
         if (existing) {
-          // A lost response cannot silently obtain another price or signing digest.
           if (!automatic && existing.terms.maximumGasCharge !== cap)
             throw new CreationOperationError('CREATION_CONFLICT');
         } else {
           if (Math.floor(Date.now() / 1000) >= initial.input.validUntil)
             throw new CreationOperationError('CREATION_EXPIRED');
+          let sponsor: GasSponsor | undefined;
+          if (dependencies.sponsor) {
+            sponsor = dependencies.sponsor(profile.pin, env.WALLET_DB, principal, signal);
+            if (automatic && !sponsor) {
+              return respond(503, { error_code: 'CREATION_UNAVAILABLE' });
+            }
+          }
           if (automatic) {
             if (!automaticCap) throw new Error('Automatic creation quote unavailable');
             const admitted = await abortable(automaticCap(profile.pin, initial, signal), signal);
@@ -214,12 +216,10 @@ export function createCreationOperationRoute(dependencies: {
               terms.maxFeePerGas >
               cap!
           ) {
-            // A small user cap is not provider downtime and is never raised silently.
             return respond(automatic ? 503 : 422, {
               error_code: automatic ? 'CREATION_UNAVAILABLE' : 'CREATION_CAP_TOO_LOW',
             });
           }
-          const sponsor = dependencies.sponsor?.(profile.pin, env.WALLET_DB, principal, signal);
           if (sponsor) {
             const now = Math.floor(Date.now() / 1000);
             terms = {
@@ -253,8 +253,7 @@ export function createCreationOperationRoute(dependencies: {
         await abortable(observe(profile.pin, signal), signal);
         signal.throwIfAborted();
       }
-      // Exact signed retries are readbacks; repository still verifies both proofs and
-      // compares the winning signature. No fresh RPC or second outbox is needed.
+
       const result = await repo.authorize(id, proof!);
       signal.throwIfAborted();
       return respond(200, result);

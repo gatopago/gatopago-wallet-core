@@ -18,10 +18,6 @@ export interface TransferDeliveryProfile extends Omit<BalanceProfile, 'finalityE
   readonly entryPointCodeHash: Hex;
 }
 
-/** Private coordinator: profiles come from admission, never an HTTP request.
- * Fresh readers share a deadline, not global promises. This does not simulate,
- * acquire a delivery lease or send anything; the caller still needs those gates.
- */
 export async function observeOwnedTransferDelivery(
   database: D1Database,
   identityInput: Principal,
@@ -56,8 +52,7 @@ export async function observeOwnedTransferDelivery(
       throw new Error('TRANSFER_DELIVERY_PROFILE_UNAVAILABLE');
     const clients = peers.map((p) => createInspectionClient(p.url, deadline));
     const tag = toHex(BigInt(candidate.checkpoint.block_number));
-    // Only seed the timestamp from this header; assessCheckpointFinality checks
-    // the complete original block and consensus against both independent peers.
+
     const header = await clients[0].request(
       { method: 'eth_getBlockByNumber', params: [tag, false] },
       { retryCount: 0, dedupe: false },
@@ -87,7 +82,7 @@ export async function observeOwnedTransferDelivery(
     if (source.status !== 'finalized' || !source.checkpoint)
       throw new Error('TRANSFER_DELIVERY_FINALITY');
     const checkpoint = source.checkpoint;
-    // A new primary session for every ownership recheck, including after RPC.
+
     const owner = {
       ownedAccount: (wid: ResourceId<'wallet'>, aid: ResourceId<'walletAccount'>) =>
         new WalletRepository(database, identity).ownedAccount(wid, aid),

@@ -49,10 +49,6 @@ function cacheLifetime(headers: Headers): number {
   return Number.isSafeInteger(age) ? Math.min(age, 3600) : 0;
 }
 
-/** Only resolved PUBLIC keys enter Cache API. No JWT, user data, imported-key promises,
- * global client or request context is retained. A new kid can refresh a cache older than
- * 60s; arbitrary unknown kids cannot force a fetch on every warm-cache request.
- */
 async function firebaseKeys(kid: string, signal: AbortSignal): Promise<JSONWebKeySet> {
   const now = Math.floor(Date.now() / 1000);
   const cache = await caches.open(CACHE_NAME);
@@ -90,7 +86,6 @@ async function firebaseKeys(kid: string, signal: AbortSignal): Promise<JSONWebKe
   const keys = await readJsonBounded<unknown>(response, 65_536, timeout);
   if (!keySet(keys)) throw new IdentityError('IDENTITY_UNAVAILABLE');
   if (maxAge > 0) {
-    // Cache persistence is an optimization, not authority. A failed put does not invalidate fresh keys.
     await cache
       .put(
         CACHE_KEY,
@@ -106,10 +101,6 @@ async function firebaseKeys(kid: string, signal: AbortSignal): Promise<JSONWebKe
   return keys;
 }
 
-/** Identifies a Firebase user, NOT an onchain signer. Local app session cutoffs are checked
- * in the repository. Firebase Admin revocation/disable synchronization is a separate gate;
- * a valid offline JWT alone does not prove that Firebase has not revoked the session.
- */
 export async function verifyConsumerIdentity(
   request: Request,
   projectId: string,

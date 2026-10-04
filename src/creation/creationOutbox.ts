@@ -2,8 +2,6 @@ import { parseResourceId } from '@gatopago/shared/v3/primitives';
 
 type CreationDeliveryState = 'pending' | 'sending' | 'uncertain' | 'accepted' | 'expired';
 
-/** Validate the lifecycle independently of user-visible account readiness. No state here
- * asserts inclusion, finality, successful execution or permission to receive/spend. */
 export function readCreationOutbox(
   row: Record<string, unknown>,
   authorizedAt: number | null,

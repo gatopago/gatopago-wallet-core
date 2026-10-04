@@ -45,8 +45,6 @@ const abi = parseAbi([
   'function getDeposit() view returns (uint256)',
 ]);
 
-/** Private service: routes supply owned, locally compiled operations, never visitor calldata.
- * The key authorizes gas only; it is not an account signer or a bundler executor key. */
 export function createGasSponsor(
   database: D1Database,
   identity: Principal,
@@ -61,7 +59,7 @@ export function createGasSponsor(
     budget = new SponsorshipBudget(database);
   if (getAddress(policy.signer) !== signer.address || rpcUrls.length !== 2)
     throw new Error('SPONSOR_CONFIGURATION_INVALID');
-  // EntryPoint v0.9 excludes validAfter itself; cover the account window from one second earlier.
+
   const terms = (validAfter: number, validUntil: number) => ({
     address: policy.address,
     verificationGasLimit: policy.verificationGasLimit,

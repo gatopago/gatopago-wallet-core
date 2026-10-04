@@ -14,8 +14,6 @@ type Bindings = Pick<WalletCoreV3Bindings, 'WALLET_DB' | 'CREATION_QUEUE_NAME'> 
   readonly CREATION_JOBS: Pick<Queue<MoneyWake>, 'send'>;
 };
 
-/** Existing queue with an explicit money discriminator. Turning off new money
- * capabilities never removes the obligation to observe a historical dispatch. */
 export function createMoneyJobHandlers(resolve: (env: Bindings) => Configuration | null) {
   return {
     async wake(env: Bindings) {
@@ -23,8 +21,7 @@ export function createMoneyJobHandlers(resolve: (env: Bindings) => Configuration
       if (!config?.profiles.length) return;
       const jobs = new MoneyJobRepository(env.WALLET_DB, config);
       let failed = 0;
-      // Bounded maintenance is independent of login and new-operation flags.
-      // Dispatched/uncertain operations cannot enter this expiry path.
+
       const maintenanceDeadline = AbortSignal.timeout(20_000);
       for (const id of await expiredMoneyCandidates(env.WALLET_DB, config)) {
         if (maintenanceDeadline.aborted) break;
@@ -87,8 +84,6 @@ export function createMoneyJobHandlers(resolve: (env: Bindings) => Configuration
                 new AbortController().signal,
                 60_000,
                 async (signal) => {
-                  // Only replay an already journaled raw transaction. A crash before
-                  // journaling remains uncertain; this job cannot sign a new send.
                   await resumeSubmission(env.WALLET_DB, source.record.candidate.userOpHash, signal);
                   return reconcileMoneyJob(
                     env.WALLET_DB,

@@ -32,9 +32,6 @@ export function isEnrollmentPath(path: string) {
   );
 }
 
-/** No account provisioning/authorization here. A registered public credential
- * must separately sign Account V3's typed InitializationApproval/EnrollmentProof.
- */
 export async function enrollmentRoute(
   request: Request,
   env: AuthBindings,
@@ -63,7 +60,7 @@ export async function enrollmentRoute(
   const method = url.pathname === CREDENTIALS || reference !== null ? 'GET' : 'POST';
   const methodResponse = allowMethods(request, origin, [method], headers);
   if (methodResponse) return methodResponse;
-  // Identity-level enrollment does not smuggle in a usable contract manifest.
+
   if (method === 'POST') {
     const incompatible = requireCurrentProtocol(request, config, 'identity');
     if (incompatible) return incompatible;

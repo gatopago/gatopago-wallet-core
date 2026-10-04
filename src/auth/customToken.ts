@@ -1,8 +1,6 @@
 import { importPKCS8, SignJWT } from 'jose';
 import { parseResourceId } from '@gatopago/shared/v3/primitives';
 
-/** Firebase exchange token only; never accepted as an API bearer. The signer JSON
- * is a Worker secret. No Admin SDK, extra server, or cached private key is needed. */
 export async function createSessionToken(
   signerJson: string,
   projectId: string,

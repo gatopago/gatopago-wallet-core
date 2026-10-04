@@ -17,9 +17,6 @@ export interface BackupObservationNetwork {
   readonly providers: readonly RpcProvider[];
 }
 
-/** Private read-only reconciliation: exact stored transaction, two pinned RPC operators,
- * canonical receipt/code and chain-specific finality. No signer, send API, admission,
- * stale-success fallback or modification of a wallet's readiness. */
 export async function reconcileBackupObservation(
   source: BackupObservationGrant,
   configuration: BackupObservationNetwork,

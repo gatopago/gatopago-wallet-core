@@ -56,9 +56,6 @@ export function readBackupPolicy(value: unknown) {
   return policy;
 }
 
-/** The compiler has already checked the observed authority against the initial policy.
- * Persist only the variable checkpoint/nonces and finality audit. Reconstruction is historical,
- * NEVER a substitute for a fresh owned RPC inspection before accepting a new authorization. */
 export function backupSnapshot(observation: BackupObservation) {
   return JSON.stringify({
     checkpoint: observation.checkpoint,
@@ -89,9 +86,7 @@ export function readBackupSnapshot(value: unknown, input: InitializationInput) {
   });
   const observedAt = integer(r.observed_at, 1),
     expiresAt = integer(r.expires_at, observedAt + 1);
-  // Closing finality may legitimately have advanced beyond the inspected block. The
-  // target must remain that exact block; assertFinalityAssessment verifies its relation
-  // to the newer finalized head. Never substitute the head for the inspected state.
+
   if (
     evidence.status !== 'finalized' ||
     !evidence.checkpoint ||
@@ -145,8 +140,6 @@ export function readBackupSnapshot(value: unknown, input: InitializationInput) {
   return { observation, observedAt, expiresAt, finalityEvidence: evidence };
 }
 
-/** Pending proposal plus a normalized security snapshot. The commit compiler must
- * verify it against the exact previously authorized backup before using any digest. */
 export function backupCommitSnapshot(observation: BackupObservation) {
   if (!observation.security.pending) throw new Error('Missing pending backup');
   return JSON.stringify({

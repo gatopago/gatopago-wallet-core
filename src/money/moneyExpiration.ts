@@ -44,9 +44,6 @@ export async function expiredMoneyCandidates(database: D1Database, configuration
   return result.results.map((row) => parseResourceId('operation', row.id));
 }
 
-/** Only a never-dispatched signed operation can expire. The whole proof comes
- * from admitted readers: finalized timestamp past the inclusive contract bound,
- * recognized account and unchanged EntryPoint nonce. No HTTP proof is accepted. */
 export async function expireUnsubmittedMoney(
   database: D1Database,
   environment: MoneyJobScope['environment'],

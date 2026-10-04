@@ -12,7 +12,6 @@ export type TransferFunds = readonly Readonly<{
   debit_atomic: string;
 }>[];
 
-/** Canonical audit snapshot; not an onchain balance oracle or cryptographic authority. */
 export function writeTransferFunds(funds: TransferFunds, network: string) {
   if (funds.length < 1 || funds.length > 2) throw new Error('TRANSFER_FUNDS_INVALID');
   const rows = funds

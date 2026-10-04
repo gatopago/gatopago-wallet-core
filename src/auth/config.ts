@@ -6,7 +6,6 @@ import {
   type EnvironmentVariables,
 } from '@gatopago/environment';
 
-// Authentication capabilities from the generated Worker bindings.
 export type AuthBindings = Pick<
   WalletCoreV3Bindings,
   | 'WALLET_DB'
@@ -45,7 +44,6 @@ export function authLimit(value: string): number {
   return Number(value);
 }
 
-/** A signed ID-token read does not require a token signing key or Turnstile secrets. */
 export function validateIdentityConfig(env: AuthBindings, input: Environment): Environment {
   const config = parseEnvironment(input);
   if (

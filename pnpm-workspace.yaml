@@ -3,7 +3,7 @@ minimumReleaseAge: 10080
 blockExoticSubdeps: true
 trustPolicy: no-downgrade
 overrides:
-  '@gatopago/shared@3.2.2': file:vendor/gatopago-shared-3.2.2.tgz
+  '@gatopago/shared@3.2.3': file:vendor/gatopago-shared-3.2.3.tgz
   # typescript-eslint 8.67.0 supports TypeScript <6.1; keep optional peer
   # resolution aligned with the workspace compiler until that range advances.
   typescript: 6.0.3

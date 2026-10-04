@@ -26,8 +26,6 @@ export { aaveReadAbiDigest } from './aaveReadAbi';
 const RAY = 10n ** 27n;
 const ceilRay = (scaled: bigint, index: bigint) => (scaled * index + RAY - 1n) / RAY;
 
-/** Read-only exact-checkpoint observation. A signed request cannot choose a Pool,
- * proxy implementation or ABI. Provider errors/disagreement never become zero. */
 export async function observeAavePosition(
   input: {
     account: Address;
@@ -213,8 +211,7 @@ export async function observeAavePosition(
           ),
         });
         const cap = ((config >> 116n) & ((1n << 36n) - 1n)) * 10n ** 6n;
-        // Conservative ceiling includes unminted treasury shares. Fresh signed
-        // simulation remains mandatory; this historical capacity cannot grant send.
+
         const used = ceilRay(scaledTotal + reserve.accruedToTreasury, index);
         const capacity = cap === 0n ? null : (cap > used ? cap - used : 0n).toString();
         await reader.close();

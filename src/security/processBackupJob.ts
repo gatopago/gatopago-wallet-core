@@ -37,9 +37,6 @@ export interface BackupJobConfiguration extends Omit<CreationDeliveryConfigurati
   readonly finality?: BackupProcessorConfiguration['finality'];
 }
 
-/** One bounded iteration, not a polling loop. Sent operations remain observable
- * without a current sponsor or login. `observed` is historical evidence only;
- * a separate current-policy projection is required before enabling the account. */
 export function createBackupProcessor(configuration: BackupJobConfiguration) {
   if (
     configuration.networks.length > 32 ||
@@ -118,7 +115,7 @@ export function createBackupProcessor(configuration: BackupJobConfiguration) {
       if (state.state === 'pending') return later(Math.max(state.next, state.until ?? 0));
       if (state.state === 'sending') {
         if ((state.until ?? 0) > now()) return later(state.until!);
-        await grants.claim(id); // A crashed send becomes uncertain, never pending.
+        await grants.claim(id);
       }
       const inspectLatest = async (): Promise<BackupJobOutcome | null> => {
         const latest = await journal.latest(id),

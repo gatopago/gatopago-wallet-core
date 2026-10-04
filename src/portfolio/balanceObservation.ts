@@ -15,7 +15,7 @@ interface Input {
   readonly genesis_hash: Hex;
   readonly address: Hex;
   readonly checkpoint: { readonly block_number: string; readonly block_hash: Hex };
-  /** Admitted fungible asset IDs, not names/decimals supplied by a token or browser. */
+
   readonly asset_ids: readonly string[];
 }
 function quantity(value: unknown): string {
@@ -36,11 +36,6 @@ function block(value: unknown, number: string, hash: Hex) {
     throw new Error('BALANCE_CHECKPOINT_MISMATCH');
 }
 
-/** Bounded, read-only snapshot at an exact EIP-1898 block hash. Caller supplies a
- * policy-selected checkpoint AFTER ownership/network admission. This lower layer
- * does not claim finality, wallet activation, available funds or spend authority.
- * Provider errors/disagreement throw, never become a fabricated zero balance.
- */
 export async function observeAccountBalances(
   input: Input,
   providers: readonly RpcProvider[],
@@ -116,7 +111,7 @@ export async function observeAccountBalances(
           checkpoint.block_hash,
         );
         const balances: { asset_id: string; amount_atomic: string }[] = [];
-        // Bounded sequential asset reads per peer; never an unbounded Promise fan-out.
+
         for (const asset of assets) {
           const kind = asset.split('/')[1];
           let amount: string;

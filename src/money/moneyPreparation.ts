@@ -58,9 +58,6 @@ export async function assertMoneyBalanceFloor(
   }
 }
 
-/** Caller supplies identity/admission, never an HTTP financial context. Prepare
- * observes but cannot sign, reserve, increase gas or dispatch. Active service
- * spends block new preparation; exact D1 exclusion is repeated at confirmation. */
 export async function prepareOwnedMoney(
   database: D1Database,
   identityInput: Principal,

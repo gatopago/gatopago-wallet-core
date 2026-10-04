@@ -18,6 +18,8 @@ import { createWalletRuntime } from '../src/runtime';
 import { runtimeFixture } from '../test/runtime.fixture';
 import * as runtimeFinality from '../src/runtime/finality';
 import { arbitrumSepolia } from '../src/runtime/catalog';
+import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
+import * as gasSponsorship from '../src/sponsorship/service';
 
 const creationOperationRoute = createCreationOperationRoute({
   profiles: [],
@@ -89,6 +91,35 @@ function candidate() {
     quoteGas: quote,
   };
   return { run: createCreationOperationRoute(deps), observe, quote, deps };
+}
+function sponsoredRuntime(settings: ReturnType<typeof runtimeFixture>) {
+  const key = generatePrivateKey();
+  const policy = {
+    address: `0x${'cd'.repeat(20)}` as const,
+    codeHash: fixtureHash('a'),
+    signer: privateKeyToAccount(key).address,
+    verificationGasLimit: '100000',
+    postOpGasLimit: '0',
+    maximumCostWei: '10000000000000000',
+    dailyGwei: 20000000,
+    userDailyGwei: 10000000,
+    userDailyOperations: 10,
+  };
+  const terms = (validAfter: number, validUntil: number) => ({
+    address: policy.address,
+    verificationGasLimit: policy.verificationGasLimit,
+    postOpGasLimit: policy.postOpGasLimit,
+    data: sponsorshipData(validAfter - 1, validUntil, `0x${'ff'.repeat(65)}`),
+  });
+  vi.spyOn(gasSponsorship, 'createGasSponsor').mockReturnValue({
+    terms,
+    authorize: async (_operation, validAfter, validUntil) => terms(validAfter, validUntil),
+  });
+  return () => createWalletRuntime(
+    { ...env, ...settings.bindings, WALLET_PAYMASTER_SIGNER_KEY: key },
+    config,
+    { ...settings.catalog, production: [{ ...settings.network, paymaster: policy }] },
+  );
 }
 async function start(authorized = true, subject = 'creation-http-a') {
   const principal = testPrincipal(subject);
@@ -165,11 +196,8 @@ describe('first creation operation HTTP boundary (synthetic quote/observer, real
     const observe = vi
       .spyOn(runtimeFinality, 'requireFreshCreationDeployment')
       .mockResolvedValue(undefined);
-    const initialRuntime = createWalletRuntime(
-      { ...env, ...settings.bindings },
-      config,
-      settings.catalog,
-    );
+    const runtime = sponsoredRuntime(settings);
+    const initialRuntime = runtime();
     const first = parseCreationPreview(
       await (
         await initialRuntime.creationOperation(await request(path(t.id), {}), env, config)
@@ -177,13 +205,10 @@ describe('first creation operation HTTP boundary (synthetic quote/observer, real
       t.consent,
     );
     expect(first.terms.verificationGasLimit).toBe(496000n);
-    expect(first.terms.maximumGasCharge).toBe(74600000000000n);
+    expect(first.terms.maximumGasCharge).toBe(84600000000000n);
+    expect(first.terms.sponsorship).toBeDefined();
     settings.network.creationGas = { ...arbitrumSepolia.creationGas };
-    const updatedRuntime = createWalletRuntime(
-      { ...env, ...settings.bindings },
-      config,
-      settings.catalog,
-    );
+    const updatedRuntime = runtime();
     const restored = parseCreationPreview(
       await (
         await updatedRuntime.creationOperation(await request(path(t.id), {}), env, config)
@@ -243,13 +268,25 @@ describe('first creation operation HTTP boundary (synthetic quote/observer, real
     const observe = vi
       .spyOn(runtimeFinality, 'requireFreshCreationDeployment')
       .mockResolvedValue(undefined);
-    const runtime = createWalletRuntime({ ...env, ...settings.bindings }, config, settings.catalog);
+    const runtime = sponsoredRuntime(settings)();
     const result = await runtime.creationOperation(await request(path(t.id), {}), env, config);
     expect(result.status).toBe(200);
     const preview = parseCreationPreview(await result.json(), t.consent);
     expect(preview.terms.maximumGasCharge).toBe(preview.candidate.maximumEntryPointCharge);
-    expect(preview.terms.maximumGasCharge).toBe(gas().maximumGasCharge);
+    expect(preview.terms.maximumGasCharge).toBe(gas().maximumGasCharge + 100000000000000n);
+    expect(preview.terms.sponsorship).toBeDefined();
     expect(observe).toHaveBeenCalledOnce();
+    expect((await queued()).results).toHaveLength(0);
+  });
+  it('refuses consumer creation without sponsorship before RPC or operation persistence', async () => {
+    const t = await start(), settings = runtimeFixture(f.pin);
+    const observe = vi.spyOn(runtimeFinality, 'requireFreshCreationDeployment');
+    const runtime = createWalletRuntime({ ...env, ...settings.bindings }, config, settings.catalog);
+    const result = await runtime.creationOperation(await request(path(t.id), {}), env, config);
+    expect(result.status).toBe(503);
+    expect(await result.json()).toEqual({ error_code: 'CREATION_UNAVAILABLE' });
+    expect(observe).not.toHaveBeenCalled();
+    expect(await count()).toBe(0);
     expect((await queued()).results).toHaveLength(0);
   });
   it.each([0n, -1n, 1n << 256n])(

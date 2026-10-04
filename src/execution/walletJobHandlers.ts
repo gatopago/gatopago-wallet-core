@@ -1,6 +1,5 @@
 type Handlers = { queue(batch: MessageBatch<unknown>, env: WalletCoreV3Bindings): Promise<void> };
-/** One existing queue, explicit domain message kinds. A subgroup must never acknowledge or
- * retry another domain's messages through the original batch's bulk methods. */
+
 export async function dispatchWalletJobs(
   batch: MessageBatch<unknown>,
   env: WalletCoreV3Bindings,

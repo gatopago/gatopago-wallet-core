@@ -7,8 +7,6 @@ import { sendOperation } from '../execution/operationTransport';
 import { MoneyRepository } from './moneyRepository';
 import { preflightOwnedMoney, type MoneyDeliveryProfile } from './moneyPreflight';
 
-/** Public retries read the existing state. Only the durable UPDATE winner may
- * send. Everything after that marker is uncertain until receipt/finality proof. */
 export async function deliverOwnedMoney(
   database: D1Database,
   identityInput: Principal,

@@ -4,13 +4,6 @@ import { verifyBackupTransaction, type BackupSponsorPolicy } from './backupTrans
 import { backupTransport, preflightBackupTransaction } from './backupRpc';
 import { withDeadline } from '../deadline';
 
-/** Internal final transport boundary, NOT provider admission, account-state/finality
- * inspection, nonce allocation or a signer. Caller must first admit the pinned network,
- * sponsor budget and current backup state under its independent checkpoint policy.
- * Sign-only adapters cannot broadcast; the persisted envelope is their idempotency unit.
- * Two private, independently operated RPCs recheck chain/nonce/operator balance and
- * simulate the exact call. Only the first broadcasts, once. No provider fallback/retry.
- * Neither HTTP nor queue inputs may supply policy, endpoints or signed transaction bytes. */
 export async function broadcastBackupTransaction(
   repository: BackupDeliveryRepository,
   claim: BackupDeliveryClaim,
@@ -33,8 +26,7 @@ export async function broadcastBackupTransaction(
       let evidenceExpiresAt: number;
       try {
         await preflightBackupTransaction(request, peers, deadline);
-        // Mandatory fresh account/finality check AFTER signer and RPC simulation. There
-        // is deliberately no default callback that treats a transport check as authority.
+
         evidenceExpiresAt = await beforeSend(deadline);
         if (
           !Number.isSafeInteger(evidenceExpiresAt) ||
@@ -46,8 +38,7 @@ export async function broadcastBackupTransaction(
         await repository.retryBeforeSend(claim);
         return 'deferred' as const;
       }
-      // An ambiguous D1 acknowledgement is NOT caught as preflight failure. A restarted
-      // consumer observes the committed marker rather than signing/broadcasting again.
+
       if (!(await repository.beginSend(claim, sponsor, signed.serialized, evidenceExpiresAt)))
         return 'lease_lost' as const;
       try {
@@ -58,7 +49,7 @@ export async function broadcastBackupTransaction(
         if (hash === signed.hash && (await repository.accepted(claim, signed.hash)))
           return 'accepted' as const;
       } catch {
-        /* Sent or possibly sent: only evidence-based observation may resolve it. */
+        // Broadcast failure leaves claim uncertain
       }
       await repository.uncertain(claim);
       return 'uncertain' as const;

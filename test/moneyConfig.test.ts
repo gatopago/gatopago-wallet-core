@@ -29,13 +29,18 @@ function networks() {
   );
 }
 describe('Public JSON monetary admission', () => {
-  it('loads the versioned market and selector with all new operations closed', () => {
+  it('loads the versioned market and enabled recipes without admitting absent gas limits', () => {
     const result = configureMoney(application, market, networks());
     expect(loadAaveMarket(result.market).pool).toBe(market.pool);
     expect(result.application.features).toEqual({
-      aave_supply: false,
-      aave_withdraw: false,
-      aave_withdraw_and_pay: false,
+      aave_supply: true,
+      aave_withdraw: true,
+      aave_withdraw_and_pay: true,
+    });
+    expect(result.gasByKind).toEqual({
+      aave_supply: null,
+      aave_withdraw: null,
+      aave_withdraw_and_pay: null,
     });
     expect(result.market.digest).toBe(deploymentDocumentDigest(JSON.stringify(market)));
     expect(JSON.stringify(result.market)).not.toMatch(/private_key|https?:\/\//i);
@@ -66,7 +71,11 @@ describe('Public JSON monetary admission', () => {
     expect(values[0].transferProfile.assetIds).toContain(market.asset_id);
   });
   it('rejects a closed feature before preparing any operation', () => {
-    const configuration = configureMoney(application, market, networks());
+    const configuration = configureMoney(
+      { ...application, features: { ...application.features, aave_supply: false } },
+      market,
+      networks(),
+    );
     expect(() =>
       requireMoneyFeature(configuration, {
         schema_version: 1,

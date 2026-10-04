@@ -8,9 +8,6 @@ import type { BalanceProfile } from '../portfolio/balances';
 export type AccountContextProfile = Pick<BalanceProfile, 'document' | 'digest'> &
   Partial<Pick<BalanceProfile, 'assetIds' | 'assetDisplay'>>;
 
-/** Owner-only identity projection for Consumer selection. A trusted server release
- * supplies the public deployment documents. Never serialize a provider profile or
- * commitments. This does not inspect chain state or grant receive/spend authority. */
 export async function readOwnedAccountContext(
   repository: Pick<WalletRepository, 'ownedAccount'>,
   walletId: ResourceId<'wallet'>,

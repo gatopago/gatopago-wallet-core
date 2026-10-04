@@ -8,10 +8,6 @@ import { inspectAccountSecurity } from '@gatopago/shared/v3/security-inspection'
 import { rpcEndpoint } from './chainProviders';
 import { inspectionRpc } from './inspectionRpc';
 
-/** Internal, read-only RPC adapter. rpcUrl is trusted server configuration, NEVER a public
- * request parameter. Build per inspection/request; no cached clients, promises or observations.
- * No new credentials, network enablement, arbitrary-address HTTP route or signing key.
- */
 export function createInspectionClient(rpcUrl: string, signal: AbortSignal, batch = false) {
   const url = rpcEndpoint(rpcUrl);
   return createPublicClient({
@@ -26,8 +22,6 @@ export function createInspectionClient(rpcUrl: string, signal: AbortSignal, batc
   });
 }
 
-/** Same bounded/read-only transport for original-composition verification, not an HTTP
- * provisioning endpoint or a network-admission shortcut. The checkpoint is supplied by policy. */
 export async function inspectWalletCreationProfile(
   input: CreationInspectionInput,
   rpcUrl: string,
@@ -37,10 +31,6 @@ export async function inspectWalletCreationProfile(
   return inspectCreationDeployment(createInspectionClient(rpcUrl, deadline, true), input);
 }
 
-/** Current security needs agreement from two admitted providers at the SAME checkpoint.
- * Distinct hosts prevent accidental duplication; provider independence is an admission gate,
- * not something hostnames prove. No fulfilled Promise or observation survives this request.
- */
 export async function inspectWalletSecurity(
   input: AccountInspectionInput,
   rpcUrls: readonly string[],

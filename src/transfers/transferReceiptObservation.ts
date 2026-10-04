@@ -4,7 +4,6 @@ import { inspectReceiptAccount, type ReceiptAccountProfile } from '../execution/
 import { verifyTransferReceipt } from './transferReceipt';
 import type { readTransferReview } from '@gatopago/shared/v3/transfer-review-record';
 
-/** One read-only observer. A second observer and finality remain mandatory. */
 export async function observeTransferReceipt(
   client: PublicClient,
   recordInput: Awaited<ReturnType<typeof readTransferReview>>,

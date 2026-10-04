@@ -44,10 +44,6 @@ const changed = (result: D1Result) => {
   return result.meta.changes === 1;
 };
 
-/** Scheduler scope is server-owned, not a Firebase session fabricated for a job.
- * Disabled/expired logins do not erase the obligation to observe a prior send.
- * No method here broadcasts, changes a nonce hold, or asserts receipt finality.
- */
 export class TransferJobRepository {
   private readonly db: D1DatabaseSession;
   private readonly environment: Environment['environment'];
@@ -74,9 +70,7 @@ export class TransferJobRepository {
       WHERE r.id = transfer_jobs.operation_id AND r.state = 'delivery_pending'
       AND u.environment = ? AND r.deployment_manifest_sha256 IN (${this.pins.map(() => '?').join(',')}))`;
   }
-  /** Historical signed record only, with independent lease revalidation after
-   * cryptographic work. It cannot be used as current signing/spending authority.
-   */
+
   async observationSource(input: TransferWake) {
     const message = parseTransferWake(input);
     if (!this.pins.length) throw new Error('TRANSFER_JOB_SCOPE');

@@ -20,9 +20,6 @@ import type { Principal } from '../auth/principal';
 import { withDeadline } from '../deadline';
 import { assertMoneyBalanceFloor, type MoneyPreparationProfile } from './moneyPreparation';
 
-/** Fresh common-head admission, independent from the historic review checkpoint.
- * Preserve every signed field and validity bound. A successful read alone cannot
- * simulate, reserve or dispatch; the subsequent D1 write binds its fingerprint. */
 export async function observeOwnedMoneyCurrent(
   database: D1Database,
   identityInput: Principal,

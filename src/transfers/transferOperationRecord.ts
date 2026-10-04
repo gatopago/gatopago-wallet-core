@@ -8,7 +8,7 @@ function legacyError(error: unknown): never {
     throw new Error(error.message.replace('EXECUTION_RECORD_', 'TRANSFER_RECORD_'));
   throw error;
 }
-/** Legacy transfer names retain their error contract over the common V3 codec. */
+
 export function readTransferOperationRecord(
   ...args: Parameters<typeof readExecutionOperationRecord>
 ) {

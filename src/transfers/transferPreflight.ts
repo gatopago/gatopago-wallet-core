@@ -14,10 +14,6 @@ export interface TransferPreflightProfile extends TransferDeliveryProfile {
   readonly transport: OperationTransport;
 }
 
-/** Private composition only. Neither a simulation nor an observation can replace
- * the other. Both must bind the exact stored signature and still be fresh after
- * all work completes. The next durable transition must compare the fingerprint.
- */
 export async function preflightOwnedTransfer(
   database: D1Database,
   identityInput: Principal,

@@ -18,9 +18,6 @@ function changes(result: D1Result) {
   return result.meta.changes;
 }
 
-/** Request-local journal; independent of sending leases and current user sessions.
- * Historical observation must survive consent expiry, revocation and sponsor changes.
- * A new uncertain observation never falls back to an old successful head. */
 export class BackupObservationJournal {
   private readonly db: D1DatabaseSession;
   private readonly grants: BackupDeliveryRepository;
@@ -199,7 +196,7 @@ export class BackupObservationJournal {
     if (r.latest_epoch !== r.lease_epoch) throw invalid();
     return this.read(r, grant);
   }
-  /** A previously finalized block identity must survive intervening unavailable reads. */
+
   async lastFinalizedReceipt(id: ResourceId<'operation'>) {
     const grant = await this.grants.observationGrant(id);
     if (!grant) return null;

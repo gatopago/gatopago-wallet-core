@@ -1,6 +1,5 @@
 import type { Environment } from '@gatopago/environment';
 
-/** Application identity after token verification. Provider claims stay in auth. */
 export interface Principal {
   readonly environment: Environment['environment'];
   readonly userId: string;

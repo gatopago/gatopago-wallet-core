@@ -19,9 +19,6 @@ const methods = new Set([
 ]);
 const maximumBatch = 32;
 
-/** Invocation-local HTTP batching, not a cache. Closing reads always go to the
- * provider again. No retries or single-call fallback can exhaust Free's budget.
- */
 export function inspectionRpc(url: string, signal: AbortSignal, batch: boolean) {
   let requestId = 0;
   let queue: Entry[] = [];
@@ -41,7 +38,7 @@ export function inspectionRpc(url: string, signal: AbortSignal, batch: boolean) 
         await discardResponseBody(response);
         throw new Error('Inspection RPC unavailable');
       }
-      // Seven maximum-size runtime code results fit within the batch bound.
+
       const body = await readJsonBounded<unknown>(response, batched ? 524_288 : 131_072, timeout);
       const rows =
         batched && Array.isArray(body) ? body : !batched && !Array.isArray(body) ? [body] : [];
@@ -75,8 +72,7 @@ export function inspectionRpc(url: string, signal: AbortSignal, batch: boolean) 
     queue = [];
     try {
       const values = await exchange(entries);
-      // Remove pending entries BEFORE resolving: a later checkpoint read must
-      // never reuse this observation, even in the next promise continuation.
+
       for (const entry of entries) pending.delete(entry.key);
       entries.forEach((entry, index) => entry.resolve(values[index]));
     } catch (error) {
@@ -95,7 +91,7 @@ export function inspectionRpc(url: string, signal: AbortSignal, batch: boolean) 
       if (batch && pending.has(key)) return pending.get(key)!;
       if (batch && queue.length >= maximumBatch) throw new Error('Inspection RPC batch limit');
       const id = ++requestId;
-      // Snapshot parameters now, so the delayed flush cannot observe mutations.
+
       const payload = `{"jsonrpc":"2.0","id":${id},${key.slice(1)}`;
       if (!batch) return (await exchange([{ id, payload, key, resolve() {}, reject() {} }]))[0];
       const work = new Promise<unknown>((resolve, reject) => {

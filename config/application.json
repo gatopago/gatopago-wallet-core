@@ -4,9 +4,9 @@
   "account_profile": "account-v3-arbitrum-sepolia",
   "money_schema_version": 1,
   "features": {
-    "aave_supply": false,
-    "aave_withdraw": false,
-    "aave_withdraw_and_pay": false
+    "aave_supply": true,
+    "aave_withdraw": true,
+    "aave_withdraw_and_pay": true
   },
   "markets": ["aave-v3-arbitrum-sepolia-usdc"]
 }

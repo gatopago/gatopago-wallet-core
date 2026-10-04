@@ -33,8 +33,6 @@ const headers = [
 ];
 type Profile = MoneyDeliveryProfile & { readonly environment: Environment['environment'] };
 
-/** Owner/auth/release checks precede every RPC. Commands accept a closed recipe
- * and public assertion transport, never an account context or arbitrary calls. */
 export function createMoneyRoute(dependencies: {
   readonly profiles: readonly Profile[];
   readonly accessProfiles?: ReceivingProfiles;

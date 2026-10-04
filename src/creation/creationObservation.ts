@@ -17,17 +17,12 @@ type SignedCreation = ReturnType<typeof authorizeCreationOperation>;
 interface Configuration {
   readonly profileDocument: string;
   readonly transport?: OperationTransport;
-  /** Omitted only for the lower-level receipt stage; durable processing requires it. */
+
   readonly finalityPolicy?: FinalityPolicyPin;
-  /** Distinct operators must be verified by admission, not inferred from hostnames. */
+
   readonly providers: readonly { readonly operatorId: string; readonly url: string }[];
 }
-/** Internal observation stage. A known transaction can be checked without the bundler.
- * Its summary/success flag is NEVER economic evidence. Two configured execution RPCs
- * must independently agree, including original composition and canonical block hashes.
- * Operator independence/admission and chain-specific finality remain separate gates.
- * No D1 projection, rebroadcast, account activation or public route is performed here.
- */
+
 export async function reconcileCreationObservation(
   signed: SignedCreation,
   configuration: Configuration,
@@ -67,7 +62,7 @@ export async function reconcileCreationObservation(
       transaction = await bundlerTransaction(transport.url, signed.userOpHash, deadline);
     if (transaction === undefined)
       return Object.freeze({ ...base, status: 'not_observed' as const, transaction_hash: null });
-    // All siblings are awaited even on an error; no request-scoped promises escape.
+
     const observations = await Promise.allSettled(
       providers.map((provider) =>
         observeCreationReceipt(
@@ -120,7 +115,6 @@ export async function reconcileCreationObservation(
       finality_evidence: assessment,
     });
   } catch {
-    // Never return provider diagnostics, embedded credentials or a cached "good" result.
     return Object.freeze({
       ...base,
       status: 'unavailable' as const,

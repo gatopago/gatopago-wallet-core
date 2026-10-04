@@ -22,8 +22,6 @@ export interface ReceiptAccountBinding {
   };
 }
 
-/** Historic code/composition and inclusion window, fenced at one canonical block.
- * This does not prove the financial effects or assess chain-specific finality. */
 export async function inspectReceiptAccount(
   client: PublicClient,
   input: ReceiptAccountBinding,

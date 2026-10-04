@@ -39,8 +39,6 @@ export const moneyFunds = (candidate: ReturnType<typeof readMoneyDraft>['candida
 type Prepared = ReturnType<typeof readMoneyDraft>;
 type Owned = Awaited<ReturnType<WalletRepository['ownedAccount']>>;
 
-/** Invocation-owned primary sessions. A restored unsigned review or a historical
- * signature is never a fresh dispatch grant. No method in this repository sends. */
 export class MoneyRepository {
   private readonly identity: Principal;
   private readonly scope: WebAuthnScope;
@@ -210,8 +208,7 @@ export class MoneyRepository {
   ) {
     return this.loadPreparation(walletId, accountId, id, false);
   }
-  /** A fresh valid owner may read an older reference after session revocation.
-   * Confirm/deliver continue to require the original authorization epoch. */
+
   async readPreparationHistory(
     walletId: ResourceId<'wallet'>,
     accountId: ResourceId<'walletAccount'>,
@@ -282,8 +279,7 @@ export class MoneyRepository {
     if (row.confirmation_sha256 !== fingerprint) throw new Error('MONEY_IDEMPOTENCY_CONFLICT');
     return this.readOperation(walletId, accountId, parseResourceId('operation', row.id));
   }
-  /** Recover a lost confirmation response using the owned preparation ID only.
-   * No saved assertions, fresh signature or mutation is required for this read. */
+
   async operationForPreparation(
     walletId: ResourceId<'wallet'>,
     accountId: ResourceId<'walletAccount'>,
@@ -307,8 +303,7 @@ export class MoneyRepository {
     if (stored.preparation_id !== preparationId) throw new Error('MONEY_REVIEW_MISMATCH');
     return stored.id;
   }
-  /** Acquire the cross-domain lock in the same transaction as the immutable
-   * signed record. Fresh evidence is private coordinator output, never HTTP. */
+
   async authorizeOperation(
     walletId: ResourceId<'wallet'>,
     accountId: ResourceId<'walletAccount'>,
@@ -437,8 +432,7 @@ export class MoneyRepository {
       throw new Error('MONEY_CONFIRMATION_CHANGED');
     return stored;
   }
-  /** One durable winner. The UPDATE, cross-domain dispatch lock and recovery job
-   * are a single D1 transaction through migration triggers, before any broadcast. */
+
   async beginDelivery(
     walletId: ResourceId<'wallet'>,
     accountId: ResourceId<'walletAccount'>,
@@ -530,8 +524,6 @@ export class MoneyRepository {
       current.record_sha256 !== stored.record_sha256 ||
       current.dispatch_started_at !== now
     ) {
-      // A second boundary may elapse while D1 commits; accept only a timestamp
-      // inside the measured freshness window, never reinterpret a later state.
       if (
         current.state !== 'dispatch_pending' ||
         current.record_sha256 !== stored.record_sha256 ||

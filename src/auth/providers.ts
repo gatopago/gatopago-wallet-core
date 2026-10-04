@@ -29,7 +29,6 @@ export async function verifyHuman(
     isLocalEnvironment(config) &&
     env.TURNSTILE_SECRET_KEY === '1x0000000000000000000000000000000AA'
   ) {
-    // Test keys return canned metadata, not the widget's hostname/action.
     return record(data) && data.success === true;
   }
   const result = record(data) ? data : {};
@@ -40,7 +39,7 @@ export async function verifyHuman(
 
   if (!accepted) {
     const errors = Array.isArray(result['error-codes']) ? result['error-codes'] : [];
-    // Log only known codes and comparison results, never provider/request payloads.
+
     console.warn({
       event: 'turnstile_verification_failed',
       success,

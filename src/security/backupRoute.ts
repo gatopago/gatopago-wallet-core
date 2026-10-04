@@ -30,9 +30,6 @@ const STATUS_PATH =
 const allowedHeaders = ['Authorization', 'Content-Type', ...Object.values(CLIENT_RELEASE_HEADERS)];
 export const isBackupPath = (path: string) => PATH.test(path) || STATUS_PATH.test(path);
 
-/** Authenticated consumer transport for two separate consents. Reads and exact retries
- * do not observe RPC, renew terms, wake jobs or broadcast. Authorization is not execution.
- * Profiles/resolver are server composition, never HTTP input. The runtime validates their network admission. */
 export function createBackupRoute(dependencies: {
   readonly accessProfiles?: ReceivingProfiles;
   readonly profiles: readonly (CreationProfilePin & {
@@ -157,8 +154,7 @@ export function createBackupRoute(dependencies: {
         available.map((p) => p.pin),
         resolver,
       );
-      // A nested commit must belong to the path's backup, even when the same user
-      // owns both. Check before allowing any mutation; missing/wrong parent is a 404.
+
       if (commitId) {
         const record = await repo.readCommit(commitId);
         signal.throwIfAborted();
@@ -181,7 +177,7 @@ export function createBackupRoute(dependencies: {
           error_code: 'INVALID_BACKUP_REQUEST',
         });
       }
-      // Parse every command before the repository may inspect a network or persist it.
+
       let command;
       try {
         if (create) command = { kind: 'prepare' as const, value: parseBackupRequest(body) };
@@ -244,7 +240,7 @@ export function createBackupRoute(dependencies: {
           ],
           { error_code: error.code },
         );
-      // Public compiler codes are an explicit allowlist; never return raw RPC/D1 errors.
+
       if (
         error instanceof Error &&
         [

@@ -46,7 +46,14 @@ El mapa privado de endpoints debe proporcionar:
 | `arbitrum_sepolia_offchain` | `https://sepolia-rollup.arbitrum.io/rpc`, Offchain Labs |
 | `arbitrum_sepolia_tenderly` | `https://arbitrum-sepolia.gateway.tenderly.co`, Tenderly |
 
-El transporte seleccionado es `self`: Wallet Core envía `EntryPoint.handleOps` mediante el primer RPC. No requiere un endpoint de bundler. Los dos RPC verifican la simulación, el nonce y el saldo de la EOA operativa. `PRIVATE_KEY` aporta una clave dedicada, distinta de las claves de respaldo y paymaster; esa EOA necesita ETH de prueba para adelantar gas. Los límites firmados de verificación siguen siendo 496.000 gas; el techo de la transacción externa es 2.000.000 y no amplía el límite autorizado por el usuario. Este perfil no configura paymaster ni sponsor de respaldo: la cuenta necesita ETH de prueba para creación y transferencias.
+The selected transport is `self`: Wallet Core sends `EntryPoint.handleOps`
+through the first RPC, without a public bundler endpoint. Both RPCs check the
+simulation, nonce and operator balance. `PRIVATE_KEY` funds the outer transaction;
+the independently signed paymaster authorization pays the UserOperation from its
+EntryPoint deposit. Sponsored creation does not require ETH in the new account.
+The verification ceiling is 750,000 gas for creation and 496,000 for transfers.
+The outer transaction ceiling is 2,000,000 gas and cannot expand user authorization.
+No first-backup sponsor is configured.
 
 La política usa el tag `finalized` de Arbitrum, con vigencia del 26/09 al 25/12/2026. Permite hasta dos horas de antigüedad del bloque finalizado y dos minutos del último bloque; no sustituye el checkpoint por un bloque reciente si el despliegue aún no está finalizado.
 
@@ -104,10 +111,36 @@ Mantener depósito y stake del paymaster, saldo de la EOA del relayer o bundler 
 operativos sigue siendo responsabilidad del despliegue. Un presupuesto no
 reemplaza al depósito ni garantiza aceptación por el transporte.
 
-El catálogo de Arbitrum Sepolia mantiene `paymaster: null` hasta desplegarlo,
-verificar su runtime/configuración y provisionar su clave. Las pruebas locales
-ya ejecutan creación y transferencia reales mediante EntryPoint con el paymaster
-propio, sin prefondo de gas de la cuenta; esto no equivale a un smoke público.
+### Mandatory consumer sponsorship
+
+`config/paymasters.json` maps network IDs to public paymaster policies. Arbitrum
+Sepolia uses `0x702bae7BDda0cB9caA40B97D082CcF8BA17c0cCD`, deployed at
+`2026-10-04T00:36:20Z` with a 0.01 ETH deposit and 0.001 ETH stake. These are deployment-time
+balances, not a guarantee of remaining funds. An empty map does not activate
+sponsorship. Each entry uses the policy fields above:
+`address`, `codeHash`, `signer`, gas limits, maximum cost and daily budgets.
+Do not put private keys in this file. `WALLET_PAYMASTER_SIGNER_KEY` is a Worker
+secret and must match the policy signer, separately from the relayer key.
+
+Consumer creation requires sponsorship. Missing configuration is rejected
+before chain inspection or preparing a new creation operation, with no silent
+self-funded fallback. A previously prepared, unsigned self-funded creation
+cannot be authorized through this consumer path. Reads of historical records
+and already authorized delivery remain available.
+
+Readiness returns 503 without complete sponsorship configuration and advertises
+`creation: false` and `sponsorship_configured: false`. This is configuration
+readiness, not proof of deposit balance or RPC availability: those are checked
+on both providers before each gas authorization. The sponsor uses the existing
+bounded JSON-RPC batch transport; it does not remove checks or cache evidence
+between invocations.
+
+Deploy and fund the paymaster using Protocol's existing `DeployPaymaster` script,
+verify its runtime hash, EntryPoint, signer, cost cap, stake and deposit, then
+record the public policy here and provision the secret before publishing Wallet
+Core. Do not redeploy the existing account factory or change user signers.
+The completion check is a confirmed sponsored creation with a zero-ETH account
+on Arbitrum Sepolia; local tests and an HTTP 200 are not that evidence.
 
 ## Transporte y operaciones pendientes
 

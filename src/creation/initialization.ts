@@ -50,13 +50,6 @@ export class InitializationError extends Error {
 }
 const nowSeconds = () => Math.floor(Date.now() / 1000);
 
-/** Internal durable consent workflow, not a public arbitrary-factory provisioning API.
- * Profiles come from the eventual independently admitted release, NEVER HTTP bodies.
- * No profile is admitted by constructing this class. Before public integration, admission
- * must also verify fresh original factory composition/bytecode and the network profile.
- * Each request constructs its own instance; it never creates wallets, broadcasts, or
- * marks deposits/spending enabled merely because a signature was accepted in D1.
- */
 export class InitializationRepository {
   private readonly db: D1DatabaseSession;
   private readonly wallets: WalletRepository;
@@ -108,8 +101,7 @@ export class InitializationRepository {
   private decode(row: Row | null) {
     return InitializationRepository.restoreRecord(row, this.scope, this.profiles);
   }
-  /** Pure restoration shared with durable jobs. Caller must select the record through
-   * an owned request or an internal job grant; this method grants neither authority. */
+
   static restoreRecord(
     row: Row | null,
     scope: WebAuthnScope,
@@ -191,8 +183,7 @@ export class InitializationRepository {
       spend_enabled: false as const,
     });
   }
-  /** Discovery only: ten owned metadata rows, no proofs, public keys, RPC or writes.
-   * Profiles can be unavailable without making a past request silently disappear. */
+
   async history(after?: string) {
     const cursor = after === undefined ? null : parseInitializationCursor(after);
     const owner = await this.owner(),
@@ -265,7 +256,7 @@ export class InitializationRepository {
     await this.owner();
     const row = await this.select(id).first<Row>(),
       attempt = this.decode(row);
-    // Include expired unsigned consent for honest history, but never extend it.
+
     const preparation = this.preparation(row, attempt);
     const operation = await this.db
       .prepare(
@@ -306,8 +297,7 @@ export class InitializationRepository {
       throw new WalletAccessError('WALLET_DATA_INVALID');
     }
   }
-  /** Owner-only signing metadata. No signature, Firebase subject, deployment document
-   * or derived receiving address is returned. Reads neither extend nor execute consent. */
+
   async readPreparation(id: ResourceId<'operation'>) {
     parseResourceId('operation', id);
     await this.owner();
@@ -319,8 +309,7 @@ export class InitializationRepository {
     await this.owner();
     return result;
   }
-  /** Internal owned read for exact operation preparation/reconciliation, including after
-   * a browser reload. Reading an expired proof does not extend or requeue its authority. */
+
   async readAuthorized(id: ResourceId<'operation'>) {
     parseResourceId('operation', id);
     await this.owner();
@@ -335,7 +324,6 @@ export class InitializationRepository {
     };
   }
   async prepare(request: Preparation) {
-    // Detach before any I/O; mutable request objects cannot alter the pending consent.
     const id = parseResourceId('operation', request.id),
       credentialRef = parseResourceId('operation', request.credentialRef);
     const { profileDigest, userSaltCommitment } = request;
@@ -429,7 +417,7 @@ export class InitializationRepository {
   }
   async authorize(id: ResourceId<'operation'>, assertion: WebAuthnAssertionBytes) {
     parseResourceId('operation', id);
-    // Public assertion buffers must not change while ownership reads are in flight.
+
     if (
       !(assertion.authenticatorData instanceof Uint8Array) ||
       assertion.authenticatorData.length > 1024 ||
@@ -449,8 +437,7 @@ export class InitializationRepository {
     const now = nowSeconds();
     if (attempt.authorizedAt === null && now >= attempt.input.validUntil)
       throw new InitializationError('INITIALIZATION_EXPIRED');
-    // An already recorded approval may be replay-read after expiration, but is NOT
-    // reauthorized or requeued. The returned receipt never claims execution readiness.
+
     let proof;
     try {
       proof = authorizeInitialization(attempt.input, response, attempt.authorizedAt ?? now);

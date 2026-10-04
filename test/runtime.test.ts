@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
-import { configureWalletNetworks, maximumGasCharge } from '../src/runtime/config';
+import { configureWalletNetworks, maximumGasCharge, sponsorshipConfigured } from '../src/runtime/config';
 import reviewedCatalog from '../src/runtime/catalog';
 import { ARBITRUM_SEPOLIA_CREATION } from '@gatopago/shared/v3/wallet-release';
 import { runtimeFixture } from './runtime.fixture';
@@ -138,6 +138,17 @@ describe('reviewed Wallet Core runtime configuration', () => {
         'WALLET_RUNTIME_CONFIGURATION_INVALID',
       );
     }
+  });
+  it('requires a matching dedicated sponsor key before advertising consumer creation', () => {
+    const key = generatePrivateKey();
+    const paymaster = { signer: privateKeyToAccount(key).address } as NonNullable<
+      ReturnType<typeof configureWalletNetworks>[number]['paymaster']
+    >;
+    expect(sponsorshipConfigured({ paymaster: undefined }, key)).toBe(false);
+    expect(sponsorshipConfigured({ paymaster }, '')).toBe(false);
+    expect(sponsorshipConfigured({ paymaster }, `0x${'00'.repeat(32)}`)).toBe(false);
+    expect(sponsorshipConfigured({ paymaster }, generatePrivateKey())).toBe(false);
+    expect(sponsorshipConfigured({ paymaster }, key)).toBe(true);
   });
   it('admits self relay without a bundler endpoint and requires an independent operator key', () => {
     const f = runtimeFixture(),

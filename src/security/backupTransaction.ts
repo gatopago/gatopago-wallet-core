@@ -9,9 +9,6 @@ import {
 } from 'viem';
 import { evmChainId, UINT256_MAX, type NetworkId } from '@gatopago/shared/v3/primitives';
 
-/** Private operator budget, not a user fee authorization or a creation UserOperation grant.
- * maxExecutionFee bounds gas * maxFeePerGas only. Networks with additional L1/operator
- * fees require their separate admission/budget policy before this transport is enabled. */
 export interface BackupSponsorPolicy {
   readonly networkId: NetworkId;
   readonly operator: Hex;
@@ -41,8 +38,6 @@ function bytes(value: unknown): asserts value is Hex {
     throw invalid();
 }
 
-/** Only type-2 direct calls. No contract creation, access list, blob, 7702 authorization,
- * user value, automatic nonce selection, repricing or chain-specific serializer fallback. */
 export function prepareBackupTransaction(
   networkId: NetworkId,
   call: Call,
@@ -105,8 +100,6 @@ export function prepareBackupTransaction(
   });
 }
 
-/** Verify the bytes returned by a sign-only adapter, not its claimed address/hash.
- * Errors deliberately exclude raw transactions, RPC credentials and signer diagnostics. */
 export async function verifyBackupTransaction(
   expected: ReturnType<typeof prepareBackupTransaction>,
   raw: unknown,

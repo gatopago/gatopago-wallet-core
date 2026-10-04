@@ -6,8 +6,7 @@ import { parseAtomicAmount } from '@gatopago/shared/v3/primitives';
 import type { Hex } from 'viem';
 
 const kinds = ['aave_supply', 'aave_withdraw', 'aave_withdraw_and_pay'] as const;
-/** Reviewed per-recipe caps, not a gas estimate or permission to change signed
- * fields. Admission is pinned to the tested market, account release and period. */
+
 export function loadMoneyGas(input: unknown, marketPin: AaveMarketPin, deployment: Hex) {
   const absent = { aave_supply: null, aave_withdraw: null, aave_withdraw_and_pay: null } as const;
   if (input === null) return absent;

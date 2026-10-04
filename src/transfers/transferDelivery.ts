@@ -7,10 +7,6 @@ import { withDeadline } from '../deadline';
 import { TransferNonceReservationRepository } from './transferNonceReservation';
 import { preflightOwnedTransfer, type TransferPreflightProfile } from './transferPreflight';
 
-/** Private delivery coordinator. No public route or admitted production profile.
- * Persists a one-use dispatch marker before handing the operation to its transport.
- * Acceptance is never settlement. Any failure beyond dispatch stays uncertain.
- */
 export async function deliverOwnedTransfer(
   database: D1Database,
   identityInput: Principal,
@@ -52,7 +48,6 @@ export async function deliverOwnedTransfer(
       signal,
       Math.max(1, Math.min(30_000, grant.expires_at * 1000 - Date.now())),
       async (deadline) => {
-        // Do not begin network I/O after the preflight observation has expired.
         const now = Math.floor(Date.now() / 1000);
         if (now < grant.dispatched_at || now >= grant.expires_at)
           throw new Error('TRANSFER_DISPATCH_EXPIRED');
@@ -78,7 +73,6 @@ export async function deliverOwnedTransfer(
       settlement: 'unconfirmed' as const,
     });
   } catch {
-    // Never retry, free reservations or disclose RPC error details/signatures.
     return Object.freeze({
       operation_id: operationId,
       userop_hash: grant.userop_hash,

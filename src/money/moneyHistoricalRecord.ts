@@ -4,8 +4,6 @@ import { readMoneyReview } from '@gatopago/shared/v3/money-review-record';
 import { parseResourceId } from '@gatopago/shared/v3/primitives';
 import { moneyFunds } from './moneyRepository';
 
-/** Restore an already authorized obligation. This grants no current signing or
- * sending authority and intentionally does not depend on an active login. */
 export async function readMoneyHistory(read: () => Promise<Record<string, unknown> | null>) {
   const row = await read();
   if (!row) throw new Error('MONEY_HISTORY_UNAVAILABLE');

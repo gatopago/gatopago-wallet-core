@@ -34,7 +34,7 @@ export interface BackupProcessorConfiguration extends Omit<
   'profiles'
 > {
   readonly networks: readonly BackupDeliveryNetwork[];
-  /** Fresh private observer output. Never caller-provided success, timestamp or checkpoint. */
+
   readonly finality: (
     profile: CreationProfilePin,
     signal: AbortSignal,
@@ -42,10 +42,6 @@ export interface BackupProcessorConfiguration extends Omit<
 }
 const now = () => Math.floor(Date.now() / 1000);
 
-/** Private coordinator: historical user consent != current authority. No public signing
- * endpoint, fresh JWT, consent renewal, replacement transaction or readiness projection.
- * The source checkpoint and account state are independently verified before signing and
- * again at broadcast. Accepted/uncertain work belongs to the observer, never this sender. */
 export function createBackupDeliveryProcessor(configuration: BackupProcessorConfiguration) {
   const finality = configuration.finality;
   if (typeof finality !== 'function' || configuration.networks.length > 32)
@@ -126,8 +122,6 @@ export function createBackupDeliveryProcessor(configuration: BackupProcessorConf
       throw new Error('BACKUP_CHECKPOINT_REGRESSED');
     let expiresAt = Math.min(observation.security_expires_at, claim.until);
     if (r.commit) {
-      // Recompile ONLY to check current pending proposal/nonce/window. The commit's
-      // signed acknowledgement still refers to its original reviewed checkpoint.
       prepareBackupCommit(
         r.backup.input,
         observation,
@@ -187,8 +181,7 @@ export function createBackupDeliveryProcessor(configuration: BackupProcessorConf
               await repository.retryBeforeSend(claim);
               return 'lease_lost' as const;
             }
-            // Check DB revocation/lease once more after RPC. The signer receives a detached,
-            // frozen envelope, never the mutable claim, user proofs or provider configuration.
+
             const current = await repository.transactionRequest(claim, network.sponsor);
             if (!current || current.unsigned !== request.unsigned) {
               await repository.retryBeforeSend(claim);
@@ -201,12 +194,10 @@ export function createBackupDeliveryProcessor(configuration: BackupProcessorConf
             );
             await verifyBackupTransaction(current, raw);
           } catch {
-            // Only the sign-only/pre-send stage is retryable. Its durable nonce reservation
-            // remains exact even if a signer succeeded but its response was lost.
             await repository.retryBeforeSend(claim);
             return 'deferred' as const;
           }
-          // Do not catch ambiguous send-marker acknowledgements as safe retries.
+
           return broadcastBackupTransaction(
             repository,
             claim,

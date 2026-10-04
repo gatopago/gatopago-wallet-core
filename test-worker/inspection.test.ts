@@ -87,7 +87,7 @@ describe('V3 original creation composition in workerd', () => {
       network_admitted: false,
     });
     expect(ids).toEqual(Array.from({ length: 29 }, (_, i) => i + 1));
-    expect(fetchMock).toHaveBeenCalledTimes(11);
+    expect(fetchMock).toHaveBeenCalledTimes(6);
   });
   it('does not reuse a successful inspection when the provider fails later', async () => {
     const test = creationInspectionScenario();
@@ -106,7 +106,7 @@ describe('V3 original creation composition in workerd', () => {
     await expect(
       inspectWalletCreationProfile(test.input, endpoint, freshSignal()),
     ).rejects.toMatchObject({ message: 'RPC_UNAVAILABLE' });
-    expect(fetchMock).toHaveBeenCalledTimes(12);
+    expect(fetchMock).toHaveBeenCalledTimes(7);
   });
   it('releases an unfinished body when creation inspection is cancelled', async () => {
     let cancelled = false;

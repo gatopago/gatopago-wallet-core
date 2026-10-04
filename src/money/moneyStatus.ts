@@ -3,8 +3,6 @@ import { writeMoneyDraft } from '@gatopago/shared/v3/money-review-record';
 import type { ResourceId } from '@gatopago/shared/v3/primitives';
 import type { MoneyRepository } from './moneyRepository';
 
-/** Stored owner-bound history only. Opening this view has no RPC, enqueue,
- * replay, expiration or release side effect, and never returns saved assertions. */
 export async function readOwnedMoneyStatus(
   database: D1Database,
   repository: MoneyRepository,

@@ -4,10 +4,6 @@ import { withDeadline } from '../deadline';
 import { writeTransferOperationRecord } from './transferOperationRecord';
 import type { readTransferReview } from '@gatopago/shared/v3/transfer-review-record';
 
-/** Private ERC-4337 preflight of EXACT stored bytes. A bundler estimate is not
- * inclusion, fresh security/funds evidence or a durable send grant. Caller must
- * admit the provider and restore/verify the historical quorum before calling.
- */
 export async function simulateTransferOperation(
   recordInput: Awaited<ReturnType<typeof readTransferReview>>,
   transport: OperationTransport,

@@ -7,10 +7,6 @@ import { observeTransferJob } from './transferObservation';
 import { writeTransferReview } from '@gatopago/shared/v3/transfer-review-record';
 import { writeTransferOperationRecord } from './transferOperationRecord';
 
-/** Leased historical observation, independent of the user's login lifetime.
- * Never accepts external receipts; the observer is invoked inside this boundary.
- * Journal and first-conflict capture share one D1 transaction. No hold release.
- */
 export async function recordTransferJobFinality(
   database: D1Database,
   environment: Environment['environment'],

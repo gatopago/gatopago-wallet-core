@@ -15,8 +15,6 @@ function exact(value: Row, keys: readonly string[]) {
     throw invalid();
 }
 
-/** Checks serialized evidence against the original grant. The digest detects storage
- * drift, not a malicious database administrator; this is not a block inclusion proof. */
 export function assertBackupObservation(
   value: unknown,
   grant: BackupObservationGrant,

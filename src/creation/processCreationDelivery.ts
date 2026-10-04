@@ -19,11 +19,6 @@ interface Configuration extends Omit<CreationDeliveryConfiguration, 'profiles'> 
   readonly relayerKey?: `0x${string}`;
 }
 
-/** Private service integration only. Scheduler must supply independently admitted profile,
- * endpoints and fresh checkpoint under its network/finality policy. Public HTTP/Next cannot
- * supply these values. Code consistency + simulation do NOT satisfy the admission gate.
- * No queue binding/public route is activated by adding this internal implementation.
- */
 export async function processCreationDelivery(
   database: D1Database,
   id: ResourceId<'operation'>,
@@ -80,8 +75,7 @@ export async function processCreationDelivery(
     await repository.retryBeforeSend(claim);
     return 'deferred' as const;
   }
-  // Persist before crossing the external-effect boundary. A D1 response failure itself
-  // is allowed to bubble up; recovery of a committed sending marker will remain uncertain.
+
   if (!(await repository.beginSend(claim))) {
     await repository.retryBeforeSend(claim);
     return 'lease_lost' as const;
@@ -96,7 +90,7 @@ export async function processCreationDelivery(
     );
     if (await repository.accepted(claim, hash)) return 'accepted' as const;
   } catch {
-    /* timeout, malformed response or ambiguous D1 acknowledgement requires observation */
+    // Failure leaves durable claim uncertain
   }
   await repository.uncertain(claim);
   return 'uncertain' as const;

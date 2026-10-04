@@ -48,9 +48,6 @@ function checkpoint(
     invalid();
 }
 
-/** Historical cryptographic reconstruction shared by owned HTTP and private delivery.
- * No fabricated Firebase identity, RPC, new signature, expiry extension or spending grant.
- * The caller must separately establish ownership/admission and check current authority. */
 export async function restoreBackupAuthorization(row: Row, initialization: InitializationInput) {
   try {
     const id = parseResourceId('operation', row.id),

@@ -8,7 +8,6 @@ import { createWalletRuntime } from '../runtime';
 import catalog from '../runtime/catalog';
 import type { ReceivingProfiles } from '../accounts/profile';
 
-/** Private service-binding handler. Never mounted on the public wallet router. */
 export async function identityService(
   request: Request,
   env: WalletCoreV3Bindings,

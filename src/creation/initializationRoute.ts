@@ -30,11 +30,6 @@ export function isInitializationPath(path: string) {
   );
 }
 
-/** Constructed by the server composition root, never by HTTP/config supplied by a user.
- * Profile integrity is NOT admission. Populating this configuration requires independent
- * release/network admission AND a fresh original-composition observer. The composition
- * root supplies these capabilities; version headers alone never admit a deployment.
- */
 export function createInitializationRoute(dependencies: {
   readonly accessProfiles?: ReceivingProfiles;
   readonly profiles: readonly (CreationProfilePin & {
@@ -135,11 +130,9 @@ export function createInitializationRoute(dependencies: {
         { rpId: config.webauthn_rp_id, origin: config.web_origin },
         dependencies.accessProfiles,
       );
-      // No unauthenticated deployment probes or identity auto-creation.
+
       await new WalletRepository(env.WALLET_DB, principal).getSession();
       if (reading) {
-        // Historical reads neither depend on fresh RPC nor authorize new work.
-        // A removed profile can be listed but cannot supply signing metadata.
         const readProfiles = profiles
           .filter((p) => p.environment === config.environment)
           .map((p) => p.pin);
@@ -235,8 +228,7 @@ export function createInitializationRoute(dependencies: {
           ],
           { error_code: error.code },
         );
-      // Crypto or infrastructure detail is not returned to the caller. A retry cannot
-      // turn an unknown outcome into a new authorization or an executed account.
+
       return respond(503, { error_code: 'INITIALIZATION_UNAVAILABLE' });
     }
   };
