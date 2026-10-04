@@ -1,2 +1,2 @@
 vendor/*.tgz binary
-worker-configuration.d.ts text eol=lf whitespace=-blank-at-eol
+worker-configuration.d.ts text eol=lf whitespace=-blank-at-eol linguist-generated=true
