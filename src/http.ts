@@ -45,7 +45,7 @@ export function enabledNetwork(config: Config, id: string): Network {
 export function withCors(response: Response, origin: string): Response {
   const headers = new Headers(response.headers);
   headers.set('Access-Control-Allow-Origin', origin);
-  headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS');
+  headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   headers.set('Access-Control-Allow-Headers', 'Authorization, Content-Type');
   headers.set('Access-Control-Max-Age', '600');
   headers.set('Vary', 'Origin');

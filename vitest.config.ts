@@ -21,6 +21,18 @@ export default defineConfig({
             generateKeyPairSync('ec', { namedCurve: 'P-256' }).privateKey.export({ format: 'jwk' }),
           ),
           TURNSTILE_SECRET_KEY: 'test-turnstile-secret',
+          ALCHEMY_WEBHOOKS: JSON.stringify({
+            'eip155:421614': { id: 'wh_test', signing_key: 'test-signing-key' },
+          }),
+          ALCHEMY_AUTH_TOKEN: 'test-auth-token',
+          FIREBASE_SERVICE_ACCOUNT: JSON.stringify({
+            project_id: 'gatopago-test',
+            client_email: 'push@gatopago-test.iam.gserviceaccount.com',
+            private_key: generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({
+              format: 'pem',
+              type: 'pkcs8',
+            }),
+          }),
           TEST_MIGRATIONS: await readD1Migrations(
             fileURLToPath(new URL('./migrations', import.meta.url)),
           ),

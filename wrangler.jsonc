@@ -13,10 +13,13 @@
 		"GATOPAGO_ENVIRONMENT": "production",
 		"WEB_ORIGIN": "https://gatopago.com",
 		"WALLET_NETWORKS": "eip155:421614,eip155:43113,eip155:10143",
-		"SPONSORED_OPERATIONS_PER_DAY": "50"
+		"SPONSORED_OPERATIONS_PER_DAY": "50",
+		// {"<network>": {"url", "range", "start"}}: where the reconciliation reads Transfer logs (default:
+		// WALLET_RPC_URLS, 100 blocks per query, from the latest block). See README.
+		"INDEX_SOURCES": "{}"
 	},
 	// Secrets: WALLET_RPC_URLS, RELAYER_PRIVATE_KEY, SPONSOR_PRIVATE_KEY, SESSION_PRIVATE_JWK,
-	// TURNSTILE_SECRET_KEY (see .dev.vars.example).
+	// TURNSTILE_SECRET_KEY, and optionally ALCHEMY_WEBHOOKS, ALCHEMY_AUTH_TOKEN (see .dev.vars.example).
 	"routes": [
 		{
 			"pattern": "api.gatopago.com",
@@ -51,6 +54,8 @@
 	],
 	"triggers": {
 		"crons": [
+			"* * * * *",
+			"*/10 * * * *",
 			"0 * * * *"
 		]
 	},

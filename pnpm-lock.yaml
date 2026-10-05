@@ -17,8 +17,8 @@ importers:
   .:
     dependencies:
       '@gatopago/shared':
-        specifier: file:vendor/gatopago-shared-4.1.0.tgz
-        version: file:vendor/gatopago-shared-4.1.0.tgz(typescript@6.0.3)(zod@4.4.3)
+        specifier: file:vendor/gatopago-shared-5.5.0.tgz
+        version: file:vendor/gatopago-shared-5.5.0.tgz(typescript@6.0.3)(zod@4.4.3)
       jose:
         specifier: ^6.2.10
         version: 6.2.12
@@ -347,9 +347,9 @@ packages:
     resolution: {integrity: sha512-IkO+/KEUvwbVpiURZg+P7zF74z5Jxe0UgJxVni+RtoHQ6IZieXaO02kmadomap/q+l6bc/jdPGGqTjhuZnuz1Q==}
     engines: {node: ^20.19.0 || ^22.13.0 || >=24}
 
-  '@gatopago/shared@file:vendor/gatopago-shared-4.1.0.tgz':
-    resolution: {integrity: sha512-9YMx5ntboG7JdmvCjcRXKPOg++1TEFDMbw/8lFsrPZd+8C32e7dvZN5c6Ixxt5OvqpLhZce3x1wsSo8xLSIWew==, tarball: file:vendor/gatopago-shared-4.1.0.tgz}
-    version: 4.1.0
+  '@gatopago/shared@file:vendor/gatopago-shared-5.5.0.tgz':
+    resolution: {integrity: sha512-NDVZ70RgG0jWkwMMV5RtKcgHqXu4QkWK4JyCkYW6J6h6NYYneyxEDgPrdHujmmatL8Fn/nJnwm5pUH/mq4OI6w==, tarball: file:vendor/gatopago-shared-5.5.0.tgz}
+    version: 5.5.0
     engines: {node: '>=24'}
 
   '@humanfs/core@0.19.2':
@@ -1840,7 +1840,7 @@ snapshots:
       '@eslint/core': 1.2.1
       levn: 0.4.1
 
-  '@gatopago/shared@file:vendor/gatopago-shared-4.1.0.tgz(typescript@6.0.3)(zod@4.4.3)':
+  '@gatopago/shared@file:vendor/gatopago-shared-5.5.0.tgz(typescript@6.0.3)(zod@4.4.3)':
     dependencies:
       viem: 2.55.19(typescript@6.0.3)(zod@4.4.3)
     transitivePeerDependencies:

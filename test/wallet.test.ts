@@ -4,13 +4,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   bytesToHex,
   createPublicClient,
+  createTestClient,
   encodeFunctionData,
   erc20Abi,
   hexToBytes,
   http,
+  parseEther,
   sha256,
   toHex,
+  walletActions,
   type Hex,
+  type Log,
 } from 'viem';
 import {
   createBundlerClient,
@@ -19,6 +23,7 @@ import {
 } from 'viem/account-abstraction';
 import { createSiweMessage } from 'viem/siwe';
 import { walletContracts, walletNetworks } from '@gatopago/shared/networks';
+import { swapPools } from '@gatopago/shared/swap';
 import {
   gatopagoAccountAbi,
   passkeyOwner,
@@ -29,6 +34,8 @@ import {
 import worker, { WalletIdentity } from '../src/index';
 
 const API = 'https://api.gatopago.com/app/v1';
+/** The real fetch, for mocks that only answer some services. */
+const realFetch = globalThis.fetch;
 const FORK_RPC = 'http://127.0.0.1:8711';
 const { chain, usdc } = walletNetworks['eip155:421614'];
 const client = createPublicClient({ chain, transport: http(FORK_RPC) });
@@ -263,9 +270,93 @@ describe('profile', () => {
     expect(await (await api('recipients/gato_1')).json()).toEqual({
       username: 'gato_1',
       display_name: 'Gato',
+      social_url: null,
       address,
     });
     expect((await api('recipients/nobody')).status).toBe(404);
+  });
+
+  it('links only to known social networks', async () => {
+    const token = await member(await newAccount());
+    const save = async (social_url: unknown) =>
+      (await api('profile', { method: 'PUT', token, body: { social_url } })).json();
+    expect(await save('https://www.instagram.com/gato?utm=1')).toMatchObject({
+      social_url: 'https://instagram.com/gato',
+    });
+    for (const link of ['https://gatopago.example/x', 'http://x.com/gato', 'https://x.com/'])
+      expect(await save(link)).toEqual({ error_code: 'INVALID_SOCIAL_URL' });
+    expect(await save('')).toMatchObject({ social_url: null });
+  });
+
+  it('keeps the card early-access survey', async () => {
+    const token = await member(await newAccount());
+    expect(await (await api('card-interest', { token })).json()).toEqual({ interest: null });
+    const answers = {
+      country: ' Bolivia ',
+      use_case: 'travel',
+      monthly_spend: '100-500',
+      card_preference: 'both',
+      wallet_pay: 'essential',
+    };
+    expect(
+      await (
+        await api('card-interest', {
+          method: 'PUT',
+          token,
+          body: { ...answers, wallet_pay: 'maybe' },
+        })
+      ).json(),
+    ).toEqual({ error_code: 'INVALID_ANSWER' });
+    await api('card-interest', { method: 'PUT', token, body: answers });
+    await api('card-interest', { method: 'PUT', token, body: { ...answers, use_case: 'daily' } });
+    expect(await (await api('card-interest', { token })).json()).toMatchObject({
+      interest: { ...answers, country: 'Bolivia', use_case: 'daily' },
+    });
+  });
+});
+
+describe('contacts and invitations', () => {
+  it('saves members to pay them, and forgets them', async () => {
+    const token = await member(await newAccount());
+    const friend = await newAccount();
+    const friendToken = await member(friend);
+    await api('profile', { method: 'PUT', token: friendToken, body: { username: 'friend_1' } });
+    const contacts = async () =>
+      (await (await api('contacts', { token })).json<{ contacts: unknown[] }>()).contacts;
+
+    expect(await contacts()).toEqual([]);
+    expect((await api('contacts', { token, body: { username: 'nobody_here' } })).status).toBe(404);
+    expect(
+      await (await api('contacts', { token: friendToken, body: { username: 'friend_1' } })).json(),
+    ).toEqual({ error_code: 'SELF_CONTACT' });
+    expect((await api('contacts', { token, body: { username: 'friend_1' } })).status).toBe(200);
+    await api('contacts', { token, body: { username: 'friend_1' } });
+    expect(await contacts()).toEqual([
+      {
+        username: 'friend_1',
+        display_name: null,
+        address: friend.address.toLowerCase(),
+      },
+    ]);
+    await api('contacts/friend_1', { method: 'DELETE', token });
+    expect(await contacts()).toEqual([]);
+  });
+
+  it('issues one shareable invitation at a time and counts who joined with it', async () => {
+    const token = await member(await newAccount());
+    expect(await (await api('invites', { token })).json()).toEqual({ invited: 0, code: null });
+    const { code } = await (
+      await api('invites', { method: 'POST', token })
+    ).json<{ code: string }>();
+    expect(code).toMatch(/^[A-HJ-NP-Z2-9]{8}$/);
+    expect(await (await api('invites', { method: 'POST', token })).json()).toEqual({
+      invited: 0,
+      code,
+    });
+
+    const joined = await signIn(await newAccount(), { invite: code, turnstile: 'human' });
+    expect(joined.status).toBe(200);
+    expect(await (await api('invites', { token })).json()).toEqual({ invited: 1, code: null });
   });
 });
 
@@ -362,5 +453,223 @@ describe('scheduled', () => {
     expect(
       await env.WALLET_DB.prepare("SELECT 1 FROM sponsorship_usage WHERE account = '0x0'").first(),
     ).toBeNull();
+  });
+});
+
+describe('activity', () => {
+  // Holds Aave's testnet USDC on Arbitrum Sepolia.
+  const HOLDER = '0x460b97bd498e1157530aeb3086301d5225b91216';
+  const anvil = createTestClient({ chain, mode: 'anvil', transport: http(FORK_RPC) }).extend(
+    walletActions,
+  );
+  const reconcile = () =>
+    worker.scheduled(createScheduledController({ cron: '*/10 * * * *' }), env);
+
+  async function pay(from: Hex, to: Hex, amount: bigint) {
+    await anvil.impersonateAccount({ address: from });
+    await anvil.setBalance({ address: from, value: parseEther('1') });
+    const hash = await anvil.writeContract({
+      account: from,
+      chain,
+      address: usdc,
+      abi: erc20Abi,
+      functionName: 'transfer',
+      args: [to, amount],
+    });
+    return client.waitForTransactionReceipt({ hash });
+  }
+
+  /** Delivers `logs` as Alchemy would: an Address Activity event signed with the webhook's key. */
+  async function deliver(logs: Log[], removed = false, signingKey = 'test-signing-key') {
+    const body = JSON.stringify({
+      webhookId: 'wh_test',
+      id: 'whevt_test',
+      type: 'ADDRESS_ACTIVITY',
+      event: {
+        network: 'ARB_SEPOLIA',
+        activity: logs.map((log) => ({
+          category: 'token',
+          log: {
+            address: log.address,
+            topics: log.topics,
+            data: log.data,
+            blockHash: log.blockHash,
+            blockNumber: toHex(log.blockNumber!),
+            transactionHash: log.transactionHash,
+            transactionIndex: toHex(log.transactionIndex!),
+            logIndex: toHex(log.logIndex!),
+            removed,
+          },
+        })),
+      },
+    });
+    const key = await crypto.subtle.importKey(
+      'raw',
+      new TextEncoder().encode(signingKey),
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['sign'],
+    );
+    const signature = new Uint8Array(
+      await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(body)),
+    );
+    return exports.default.fetch(
+      new Request(`${API}/webhooks/alchemy`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Alchemy-Signature': bytesToHex(signature).slice(2),
+        },
+        body,
+      }),
+    );
+  }
+
+  it("indexes members' USDC transfers and lists them newest first", async () => {
+    const alice = await newAccount(),
+      bob = await newAccount();
+    const [aliceToken, bobToken] = [await member(alice), await member(bob)];
+    await api('profile', { method: 'PUT', token: bobToken, body: { username: 'bob_activity' } });
+    await reconcile();
+    await pay(HOLDER, alice.address, 5_000_000n);
+    await pay(alice.address, bob.address, 1_500_000n);
+    await reconcile();
+    await reconcile();
+
+    const { activity, next_cursor } = await (
+      await api('activity', { token: aliceToken })
+    ).json<{
+      activity: Record<string, unknown>[];
+      next_cursor: string | null;
+    }>();
+    expect(next_cursor).toBeNull();
+    expect(activity).toMatchObject([
+      {
+        direction: 'sent',
+        kind: 'transfer',
+        currency: 'USDC',
+        amount: '1500000',
+        counterparty: bob.address,
+        counterparty_username: 'bob_activity',
+      },
+      { direction: 'received', amount: '5000000', counterparty_username: null },
+    ]);
+    const forBob = await (
+      await api('activity', { token: bobToken })
+    ).json<{
+      activity: Record<string, unknown>[];
+    }>();
+    expect(forBob.activity).toMatchObject([
+      { direction: 'received', amount: '1500000', counterparty: alice.address },
+    ]);
+    expect((await api('activity')).status).toBe(401);
+    expect((await api('activity?before=nope', { token: aliceToken })).status).toBe(400);
+  });
+
+  it('keeps what a signed webhook delivers and forgets what a reorg removed', async () => {
+    const carol = await newAccount();
+    const token = await member(carol);
+    // HOLDER is Aave's aToken: an ordinary wallet in between makes this a plain transfer.
+    const wallet = '0x000000000000000000000000000000000000ca11';
+    await pay(HOLDER, wallet, 2_000_000n);
+    const { logs } = await pay(wallet, carol.address, 2_000_000n);
+    const activity = async () =>
+      (await (await api('activity', { token })).json<{ activity: unknown[] }>()).activity;
+
+    expect((await deliver(logs, false, 'forged-key')).status).toBe(401);
+    expect(await activity()).toEqual([]);
+    expect((await deliver(logs)).status).toBe(200);
+    expect((await deliver(logs)).status).toBe(200);
+    expect(await activity()).toMatchObject([
+      { direction: 'received', amount: '2000000', kind: 'transfer' },
+    ]);
+    await deliver(logs, true);
+    expect(await activity()).toEqual([]);
+
+    // USDC sent to Circle's TokenMinter is a CCTP burn: a crossing to another network.
+    const burn = await pay(
+      carol.address,
+      walletNetworks['eip155:421614'].cctp.tokenMinter,
+      500_000n,
+    );
+    await deliver(burn.logs);
+    expect(await activity()).toMatchObject([{ direction: 'sent', kind: 'crosschain' }]);
+
+    // USDC sent to Aave's aToken is saved in Grow.
+    const saved = await pay(carol.address, walletNetworks['eip155:421614'].aave.aToken, 100_000n);
+    await deliver(saved.logs);
+    expect(await activity()).toMatchObject([
+      { direction: 'sent', kind: 'earn' },
+      { kind: 'crosschain' },
+    ]);
+
+    // USDC paid into a Uniswap pool is a swap.
+    const [pool] = swapPools(walletNetworks['eip155:421614']);
+    await deliver((await pay(carol.address, pool, 100_000n)).logs);
+    expect(await activity()).toMatchObject([
+      { direction: 'sent', kind: 'swap' },
+      { kind: 'earn' },
+      { kind: 'crosschain' },
+    ]);
+  });
+
+  it('notifies the receiver once per movement and forgets tokens FCM no longer knows', async () => {
+    const erin = await newAccount();
+    const token = await member(erin);
+    expect((await api('push-tokens', { token, body: { token: 'not a token' } })).status).toBe(400);
+    const device = `fcm-device-${'x'.repeat(40)}`;
+    expect(
+      (await api('push-tokens', { token, body: { token: device, language: 'es' } })).status,
+    ).toBe(200);
+    const sent: { message: { token: string; data: Record<string, string> } }[] = [];
+    let fcmStatus = 200;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === 'https://oauth2.googleapis.com/token')
+        return Response.json({ access_token: 'google-token', expires_in: 3600 });
+      if (url === 'https://fcm.googleapis.com/v1/projects/gatopago-test/messages:send') {
+        expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer google-token');
+        sent.push(JSON.parse(String(init?.body)));
+        return new Response(null, { status: fcmStatus });
+      }
+      return realFetch(input, init);
+    });
+
+    const { logs } = await pay(HOLDER, erin.address, 3_000_000n);
+    await deliver(logs);
+    await deliver(logs);
+    expect(sent).toHaveLength(1);
+    expect(sent[0].message.token).toBe(device);
+    expect(sent[0].message.data).toMatchObject({
+      type: 'movement',
+      title: 'Recibiste 3,00 USDC',
+      link: '/statement',
+    });
+
+    fcmStatus = 404;
+    await deliver((await pay(HOLDER, erin.address, 1_000_000n)).logs);
+    expect(
+      await env.WALLET_DB.prepare('SELECT 1 FROM push_tokens WHERE token = ?').bind(device).first(),
+    ).toBeNull();
+  });
+
+  it("adds new members' addresses to the webhooks once", async () => {
+    const dave = await newAccount();
+    await member(dave);
+    const updates: { webhook_id: string; addresses_to_add: string[] }[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      if (String(input) !== 'https://dashboard.alchemy.com/api/update-webhook-addresses')
+        return realFetch(input, init);
+      expect(new Headers(init?.headers).get('X-Alchemy-Token')).toBe('test-auth-token');
+      updates.push(JSON.parse(String(init?.body)));
+      return Response.json({});
+    });
+    const watch = () => worker.scheduled(createScheduledController({ cron: '* * * * *' }), env);
+    await watch();
+    expect(updates).toHaveLength(1);
+    expect(updates[0].webhook_id).toBe('wh_test');
+    expect(updates[0].addresses_to_add).toContain(dave.address.toLowerCase());
+    await watch();
+    expect(updates).toHaveLength(1);
   });
 });

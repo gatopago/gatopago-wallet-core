@@ -9,3 +9,9 @@ SPONSOR_PRIVATE_KEY=""
 # ES256 private JWK (JSON) that signs sessions.
 SESSION_PRIVATE_JWK=""
 TURNSTILE_SECRET_KEY=""
+# Optional: Alchemy Address Activity webhooks, one per network: {"eip155:421614":{"id":"wh_…","signing_key":"whsec_…"}}
+ALCHEMY_WEBHOOKS=""
+# Optional: Alchemy auth token (dashboard) that adds members' addresses to those webhooks.
+ALCHEMY_AUTH_TOKEN=""
+# Optional: Firebase service account JSON (project_id, client_email, private_key) for payment notifications.
+FIREBASE_SERVICE_ACCOUNT=""

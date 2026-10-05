@@ -7,6 +7,7 @@ export interface Member {
   readonly initialOwners: readonly Hex[] | null;
   readonly username: string | null;
   readonly displayName: string | null;
+  readonly socialUrl: string | null;
 }
 
 interface MemberRow {
@@ -15,6 +16,7 @@ interface MemberRow {
   initial_owners: string | null;
   username: string | null;
   display_name: string | null;
+  social_url: string | null;
 }
 
 const member = (row: MemberRow): Member => ({
@@ -23,9 +25,10 @@ const member = (row: MemberRow): Member => ({
   initialOwners: row.initial_owners ? JSON.parse(row.initial_owners) : null,
   username: row.username,
   displayName: row.display_name,
+  socialUrl: row.social_url,
 });
 
-const COLUMNS = 'id, address, initial_owners, username, display_name';
+const COLUMNS = 'id, address, initial_owners, username, display_name, social_url';
 
 export async function memberByAddress(db: D1Database, address: Address): Promise<Member | null> {
   const row = await db
