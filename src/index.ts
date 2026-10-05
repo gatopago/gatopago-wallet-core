@@ -1,155 +1,91 @@
-import { isProfilePath, profileRoute } from './accounts/profileRoute';
-import { configuredEnvironment } from './auth/config';
-import { isAuthPath, authRoute } from './auth/route';
-import { CLIENT_COMPATIBILITY_PATH } from '@gatopago/shared/v3/client-release';
-import { clientProtocolRoute } from './clientProtocol';
-import { isWalletReadPath, walletReadRoute } from './accounts/route';
-import { enrollmentRoute, isEnrollmentPath } from './enrollment/route';
-import { isInitializationPath } from './creation/initializationRoute';
-import { isCreationOperationPath } from './creation/creationOperationRoute';
-import { dispatchWalletJobs } from './execution/walletJobHandlers';
-import { isBackupPath } from './security/backupRoute';
-import { isTransferCommandPath } from './transfers/transferRoute';
-import { isMoneyReadPath } from './money/moneyReadRoute';
-import { isMoneyCommandPath } from './money/moneyRoute';
-import { pruneAuthChallenges } from './auth/retention';
-import { pruneLimits } from './auth/limits';
-import { parseResourceId } from '@gatopago/shared/v3/primitives';
+import { getAddress, isAddress } from 'viem';
+import { addApproval, readApprovals } from './approvals';
+import { createNonce, createSession } from './auth';
+import { bundle } from './bundler';
+import { config, type Config } from './config';
+import { HttpError, json, withCors } from './http';
+import { sponsor } from './paymaster';
+import { readProfile, readRecipient, updateProfile } from './profile';
 
-import catalog from './runtime/catalog';
-import { createWalletRuntime } from './runtime';
+export { Bundler } from './bundler';
+export { WalletIdentity } from './identity';
 
-export function createWalletWorker(configuration?: unknown, environment = configuredEnvironment) {
-  return {
-    async scheduled(_controller: ScheduledController, env: WalletCoreV3Bindings): Promise<void> {
-      await Promise.all([
-        pruneAuthChallenges(env.WALLET_DB),
-        pruneLimits(env.WALLET_DB, Math.floor(Date.now() / 1000)),
-      ]);
-      const config = environment(env);
-      const { jobs, recoverRelay } = createWalletRuntime(
-        env,
-        config,
-        configuration ?? catalog(config),
-      );
-      const results = await Promise.allSettled([
-        recoverRelay(env.WALLET_DB),
-        jobs.creation.wake(env),
-        jobs.backup.wake(env),
-        jobs.transfer.wake(env),
-        jobs.money.wake(env),
-      ]);
-      if (results.some((result) => result.status === 'rejected'))
-        throw new Error('WALLET_SCHEDULER_FAILED');
-    },
-    async queue(batch: MessageBatch<unknown>, env: WalletCoreV3Bindings): Promise<void> {
-      const config = environment(env);
-      const runtime = createWalletRuntime(env, config, configuration ?? catalog(config));
-      await dispatchWalletJobs(batch, env, runtime.jobs);
-    },
-    async fetch(
-      request: Request,
-      env: WalletCoreV3Bindings,
-      ctx?: ExecutionContext,
-    ): Promise<Response> {
-      const path = new URL(request.url).pathname;
-      if (path === '/app/v1/health/live')
-        return Response.json(
-          { service: 'gatopago-wallet-core', status: 'ok' },
-          { headers: { 'Cache-Control': 'no-store' } },
-        );
-      if (
-        path !== '/app/v1/health/ready' &&
-        !isProfilePath(path) &&
-        !isAuthPath(path) &&
-        path !== CLIENT_COMPATIBILITY_PATH &&
-        !isWalletReadPath(path) &&
-        !isEnrollmentPath(path) &&
-        !isInitializationPath(path) &&
-        !isCreationOperationPath(path) &&
-        !isBackupPath(path) &&
-        !isTransferCommandPath(path) &&
-        !isMoneyReadPath(path) &&
-        !isMoneyCommandPath(path)
-      )
-        return Response.json(
-          { error_code: 'NOT_FOUND' },
-          { status: 404, headers: { 'Cache-Control': 'no-store' } },
-        );
-      try {
-        const config = environment(env);
-        let runtime: ReturnType<typeof createWalletRuntime> | undefined;
-        const walletRuntime = () =>
-          (runtime ??= createWalletRuntime(env, config, configuration ?? catalog(config)));
-
-        if (isProfilePath(path))
-          return await profileRoute(request, env, config, (owned, signal) =>
-            walletRuntime().receivingProfiles(owned, signal),
-          );
-        if (isAuthPath(path))
-          return await authRoute(request, env, config, (owned, signal) =>
-            walletRuntime().receivingProfiles(owned, signal),
-          );
-        if (isEnrollmentPath(path))
-          return await enrollmentRoute(request, env, config, (owned, signal) =>
-            walletRuntime().receivingProfiles(owned, signal),
-          );
-        if (isWalletReadPath(path))
-          return await walletReadRoute(
-            request,
-            env,
-            config,
-            (owned, signal) => walletRuntime().balanceProfiles(owned, signal),
-            (owned, signal) => walletRuntime().receivingProfiles(owned, signal),
-            () => walletRuntime().accountContextProfiles,
-          );
-        const resolved = walletRuntime();
-        if (isMoneyReadPath(path)) return await resolved.moneyRead(request, env, config);
-        if (isMoneyCommandPath(path)) {
-          const response = await resolved.money(request, env, config);
-          if (ctx && response.ok && request.method === 'POST' && path.endsWith('/deliver'))
-            ctx.waitUntil(
-              resolved.jobs.money.wake(env).catch(() => {
-                console.warn({ event: 'v3_money_wake_failed' });
-              }),
-            );
-          return response;
-        }
-        if (path === '/app/v1/health/ready')
-          return Response.json(
-            {
-              service: 'gatopago-wallet-core',
-              configured: resolved.configured,
-              capabilities: resolved.capabilities,
-              networks: resolved.networks,
-            },
-            { status: resolved.configured ? 200 : 503, headers: { 'Cache-Control': 'no-store' } },
-          );
-        if (isTransferCommandPath(path)) return await resolved.transfer(request, env, config);
-        if (isBackupPath(path)) return await resolved.backup(request, env, config);
-        if (isCreationOperationPath(path)) {
-          const response = await resolved.creationOperation(request, env, config);
-          if (ctx && response.ok && request.method === 'POST' && path.endsWith('/authorize')) {
-            const id = parseResourceId('operation', path.split('/')[4]);
-
-            ctx.waitUntil(
-              resolved.jobs.creation.wake(env, id).catch(() => {
-                console.warn({ event: 'v3_creation_wake_failed' });
-              }),
-            );
-          }
-          return response;
-        }
-        if (isInitializationPath(path)) return await resolved.initialization(request, env, config);
-        return clientProtocolRoute(request, config, resolved.accountProfiles);
-      } catch {
-        return Response.json(
-          { error_code: 'SERVICE_UNAVAILABLE' },
-          { status: 503, headers: { 'Cache-Control': 'no-store', 'Retry-After': '60' } },
-        );
-      }
-    },
-  } satisfies ExportedHandler<WalletCoreV3Bindings>;
+function route(request: Request, env: Env, settings: Config): Promise<Response> {
+  const { pathname } = new URL(request.url);
+  const [name, id = '', extra] = pathname.startsWith('/app/v1/')
+    ? pathname.slice(8).split('/')
+    : [];
+  if (extra !== undefined) throw new HttpError(404, 'NOT_FOUND');
+  switch (`${request.method} ${name}`) {
+    case 'POST auth':
+      if (id === 'nonce') return createNonce(request, env);
+      if (id === 'session') return createSession(request, env, settings);
+      break;
+    case 'GET profile':
+      if (!id) return readProfile(request, env, settings);
+      break;
+    case 'PUT profile':
+      if (!id) return updateProfile(request, env, settings);
+      break;
+    case 'GET recipients':
+      if (id) return readRecipient(request, env, id);
+      break;
+    case 'GET approvals':
+      if (isAddress(id)) return readApprovals(request, env, getAddress(id));
+      break;
+    case 'POST approvals':
+      if (isAddress(id)) return addApproval(request, env, settings, getAddress(id));
+      break;
+    case 'POST paymaster':
+      if (id) return sponsor(request, env, settings, id);
+      break;
+    case 'POST bundler':
+      if (id) return bundle(request, env, settings, id);
+      break;
+  }
+  throw new HttpError(404, 'NOT_FOUND');
 }
-export default createWalletWorker();
-export { WalletIdentity } from './auth/service';
+
+export default {
+  async fetch(request, env) {
+    if (new URL(request.url).pathname === '/app/v1/health') {
+      try {
+        config(env);
+        return json({ status: 'ok' });
+      } catch (error) {
+        console.error(error);
+        return json({ status: 'misconfigured' }, 503);
+      }
+    }
+    let settings: Config;
+    try {
+      settings = config(env);
+    } catch (error) {
+      console.error(error);
+      return json({ error_code: 'SERVICE_UNAVAILABLE' }, 503);
+    }
+    const cors = (response: Response) =>
+      request.headers.get('Origin') === settings.webOrigin
+        ? withCors(response, settings.webOrigin)
+        : response;
+    if (request.method === 'OPTIONS') return cors(new Response(null, { status: 204 }));
+    try {
+      return cors(await route(request, env, settings));
+    } catch (error) {
+      if (error instanceof HttpError) return cors(json({ error_code: error.code }, error.status));
+      console.error(error);
+      return cors(json({ error_code: 'INTERNAL_ERROR' }, 500));
+    }
+  },
+
+  /** Hourly: forgets expired sign-in nonces and sponsorship counters older than yesterday. */
+  async scheduled(_controller, env) {
+    const now = Math.floor(Date.now() / 1000);
+    await env.WALLET_DB.batch([
+      env.WALLET_DB.prepare('DELETE FROM siwe_nonces WHERE expires_at <= ?').bind(now),
+      env.WALLET_DB.prepare('DELETE FROM sponsorship_usage WHERE day < ?').bind(
+        Math.floor(now / 86_400) - 1,
+      ),
+    ]);
+  },
+} satisfies ExportedHandler<Env>;

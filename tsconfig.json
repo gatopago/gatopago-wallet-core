@@ -11,13 +11,13 @@
       "ESNext",
       "DOM"
     ],
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    "allowImportingTsExtensions": true
   },
   "include": [
     "src",
-    "test",
     "vitest.config.ts",
-    "vitest.worker.config.ts",
+    "test/fork.ts",
     "worker-configuration.d.ts"
   ]
 }

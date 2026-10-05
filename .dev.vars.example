@@ -1,21 +1,11 @@
-# TYPE GENERATION ONLY: empty placeholders, never credentials.
-# Empty values are used only to generate binding types. See README.md.
-FIREBASE_CUSTOM_TOKEN_SIGNER_JSON=""
+# Secrets (wrangler secret put <NAME>). Empty values here only generate binding types.
+
+# {"eip155:421614":"https://…","eip155:43113":"https://…","eip155:10143":"https://…"}
+WALLET_RPC_URLS=""
+# Submits bundles (pays outer gas, refunded by the EntryPoint from the paymaster deposit).
+RELAYER_PRIVATE_KEY=""
+# Signs gas sponsorships; must be the paymaster's sponsor signer.
+SPONSOR_PRIVATE_KEY=""
+# ES256 private JWK (JSON) that signs sessions.
+SESSION_PRIVATE_JWK=""
 TURNSTILE_SECRET_KEY=""
-AUTH_RATE_LIMIT_PEPPER=""
-
-# Private endpoint map referenced by src/runtime/catalog.ts; never supplied by HTTP/Queue.
-# Required Arbitrum Sepolia keys: arbitrum_sepolia_offchain, arbitrum_sepolia_tenderly.
-# See RUNTIME.md for the two public RPCs; self relay needs no bundler URL.
-WALLET_RPC_ENDPOINTS="{}"
-# Optional operator key for backup gas sponsorship, never a user ADMIN key.
-WALLET_BACKUP_SIGNER_KEY=""
-
-# Existing deployment wallet: relays handleOps and signs paymaster gas authorizations.
-# Must match the signer in config/paymasters.json. Never a user account key.
-PRIVATE_KEY=""
-
-GATOPAGO_WEB_ORIGIN=""
-GATOPAGO_API_ORIGIN=""
-GATOPAGO_BUSINESS_ORIGIN=""
-GATOPAGO_WALLET_NETWORKS=""
