@@ -1,6 +1,5 @@
 import type { Hex } from 'viem';
 import { generateSiweNonce, parseSiweMessage, verifySiweMessage } from 'viem/siwe';
-import { createResourceId } from '@gatopago/shared/primitives';
 import type { Config } from './config';
 import { HttpError, json, rateLimit, readJson } from './http';
 import { admit, memberByAddress } from './members';
@@ -68,7 +67,7 @@ export async function createSession(request: Request, env: Env, config: Config):
     if (!body.invite || !body.turnstile) throw new HttpError(403, 'INVITE_REQUIRED');
     if (!(await isHuman(config, body.turnstile, request.headers.get('CF-Connecting-IP'))))
       throw new HttpError(403, 'TURNSTILE_FAILED');
-    if (!(await admit(env.WALLET_DB, createResourceId('user'), message.address, body.invite)))
+    if (!(await admit(env.WALLET_DB, `usr_${crypto.randomUUID()}`, message.address, body.invite)))
       throw new HttpError(403, 'INVITE_INVALID');
     member = await memberByAddress(env.WALLET_DB, message.address);
   }

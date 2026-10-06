@@ -17,7 +17,7 @@
     "build": "wrangler deploy --dry-run --outdir .wrangler/build"
   },
   "dependencies": {
-    "@gatopago/shared": "file:vendor/gatopago-shared-5.5.0.tgz",
+    "@gatopago/shared": "file:vendor/gatopago-shared-6.0.0.tgz",
     "jose": "^6.2.10",
     "viem": "2.55.19"
   },

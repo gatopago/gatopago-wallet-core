@@ -16,7 +16,7 @@
 		"SPONSORED_OPERATIONS_PER_DAY": "50",
 		// {"<network>": {"url", "range", "start"}}: where the reconciliation reads Transfer logs (default:
 		// WALLET_RPC_URLS, 100 blocks per query, from the latest block). See README.
-		"INDEX_SOURCES": "{}"
+		"INDEX_SOURCES": "{\"eip155:421614\":{\"url\":\"https://sepolia-rollup.arbitrum.io/rpc\",\"range\":1000},\"eip155:43113\":{\"url\":\"https://api.avax-test.network/ext/bc/C/rpc\",\"range\":2000},\"eip155:10143\":{\"url\":\"https://testnet-rpc.monad.xyz\",\"range\":100}}"
 	},
 	// Secrets: WALLET_RPC_URLS, RELAYER_PRIVATE_KEY, SPONSOR_PRIVATE_KEY, SESSION_PRIVATE_JWK,
 	// TURNSTILE_SECRET_KEY, and optionally ALCHEMY_WEBHOOKS, ALCHEMY_AUTH_TOKEN (see .dev.vars.example).

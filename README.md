@@ -57,18 +57,29 @@ pnpm wrangler d1 create gatopago-wallet   # paste the id into wrangler.jsonc
 pnpm db:migrate
 ```
 
-Secrets (`pnpm wrangler secret put <NAME>`, described in `.dev.vars.example`):
+## Configuration
 
-| Secret | |
-|---|---|
-| `WALLET_RPC_URLS` | JSON map of CAIP-2 id to RPC URL |
-| `RELAYER_PRIVATE_KEY` | Sends bundles; needs native gas on every network (refunded from the paymaster deposit) |
-| `SPONSOR_PRIVATE_KEY` | The paymaster's sponsor signer |
-| `SESSION_PRIVATE_JWK` | ES256 private JWK, e.g. `node -e "console.log(JSON.stringify(require('crypto').generateKeyPairSync('ec',{namedCurve:'P-256'}).privateKey.export({format:'jwk'})))"` |
-| `TURNSTILE_SECRET_KEY` | Cloudflare Turnstile |
-| `ALCHEMY_WEBHOOKS` | Optional. `{"<network>": {"id", "signing_key"}}` of each Address Activity webhook |
-| `ALCHEMY_AUTH_TOKEN` | Optional. Alchemy dashboard token that adds members' addresses to the webhooks |
-| `FIREBASE_SERVICE_ACCOUNT` | Optional. Firebase service account JSON; members are notified through FCM of the USDC they receive |
+Plain settings live in `wrangler.jsonc` (`vars`); secrets are set with
+`pnpm wrangler secret put <NAME>` (or `… < file` for a file) and listed in `.dev.vars.example`.
+`/app/v1/health` answers 503 while any required one is missing or invalid.
+
+| Name | Kind | What it is | How to get it |
+|---|---|---|---|
+| `GATOPAGO_ENVIRONMENT` | var | Deployment name (`production`); sessions are bound to it | Fixed per deployment |
+| `WEB_ORIGIN` | var | The web app's origin: the only one CORS allows and SIWE messages name | `https://gatopago.com` |
+| `WALLET_NETWORKS` | var | CAIP-2 ids of the networks accounts use | Networks with GatoPago's contracts (`protocol/deployments`) |
+| `SPONSORED_OPERATIONS_PER_DAY` | var | Sponsored operations per account and day | Policy; `50` today |
+| `INDEX_SOURCES` | var | Per network, the RPC `url`, blocks per query (`range`) and first block (`start`) the reconciliation reads | Public RPCs and the most each accepts per `eth_getLogs` (Arbitrum 1000, Fuji 2048, Monad 100). Not Alchemy's free tier, which allows 10 |
+| `WALLET_RPC_URLS` | secret | `{"<network>": "<url>"}`: RPC for the bundler, paymaster and reads | Alchemy app *GatoPago-server* (no domain restriction) with every network enabled: `https://arb-sepolia.g.alchemy.com/v2/<key>`, `https://avax-fuji.g.alchemy.com/v2/<key>`, `https://monad-testnet.g.alchemy.com/v2/<key>` |
+| `RELAYER_PRIVATE_KEY` | secret | Sends bundles and pays their gas, refunded from the paymaster deposit | A dedicated key (`cast wallet new`); fund it with native gas on every network |
+| `SPONSOR_PRIVATE_KEY` | secret | Signs gas sponsorships | The paymaster's sponsor signer (`DeployWallet.s.sol`, `GATOPAGO_SPONSOR_SIGNER`) |
+| `SESSION_PRIVATE_JWK` | secret | ES256 key that signs sessions; Flow verifies them with its public part | `node -e "console.log(JSON.stringify(require('crypto').generateKeyPairSync('ec',{namedCurve:'P-256'}).privateKey.export({format:'jwk'})))"`; Flow's `SESSION_PUBLIC_JWK` is the same JWK without `d` |
+| `TURNSTILE_SECRET_KEY` | secret | Verifies the sign-up challenge | Cloudflare → Turnstile → the widget's secret key (the web uses its site key) |
+| `ALCHEMY_WEBHOOKS` | secret, optional | `{"<network>": {"id", "signing_key"}}` of each Address Activity webhook, to receive movements as they happen | Alchemy → Webhooks → one *Address Activity* webhook per network, URL `https://api.gatopago.com/app/v1/webhooks/alchemy`; each one's ID (`wh_…`) and *signing key* |
+| `ALCHEMY_AUTH_TOKEN` | secret, optional | Adds new members' addresses to those webhooks | Alchemy → Webhooks → *Auth token* (top right) |
+| `FIREBASE_SERVICE_ACCOUNT` | secret, optional | Sends payment notifications through FCM | Firebase → Project settings → Service accounts → *Generate new private key*; upload the JSON with `pnpm wrangler secret put FIREBASE_SERVICE_ACCOUNT < key.json` and delete the file |
+
+Bindings in `wrangler.jsonc`: `WALLET_DB` (D1), `RATE_LIMITER`, and the `BUNDLER` Durable Object.
 
 Then `pnpm run deploy`. Invitations are created in the D1 console:
 

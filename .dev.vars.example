@@ -1,4 +1,5 @@
 # Secrets (wrangler secret put <NAME>). Empty values here only generate binding types.
+# What each one is and how to get it: README.md, Configuration.
 
 # {"eip155:421614":"https://…","eip155:43113":"https://…","eip155:10143":"https://…"}
 WALLET_RPC_URLS=""
