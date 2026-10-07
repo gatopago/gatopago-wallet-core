@@ -1,5 +1,6 @@
-import { decodeEventLog, hexToBytes, isAddressEqual, isHex, type Address, type Hex } from 'viem';
-import { storeTransfers, transferEvent, type Transfer } from './activity';
+import { decodeEventLog, hexToBytes, isHex, type Address, type Hex } from 'viem';
+import { coinOf, storeTransfers, transferEvent, type Transfer } from './activity';
+import type { Budget } from './budget';
 import type { Config } from './config';
 import { HttpError, json } from './http';
 import { notifyReceived } from './push';
@@ -69,7 +70,7 @@ export async function receiveAlchemyWebhook(
   const added: Transfer[] = [];
   const removed: D1PreparedStatement[] = [];
   for (const { log } of payload.event?.activity ?? []) {
-    if (!log || !isAddressEqual(log.address, network.usdc)) continue;
+    if (!log || !coinOf(network, log.address)) continue;
     let args;
     try {
       ({ args } = decodeEventLog({ abi: [transferEvent], topics: log.topics, data: log.data }));
@@ -80,6 +81,7 @@ export async function receiveAlchemyWebhook(
       transactionHash: log.transactionHash,
       logIndex: Number(log.logIndex),
       blockNumber: BigInt(log.blockNumber),
+      token: log.address,
       from: args.from,
       to: args.to,
       value: args.value,
@@ -92,18 +94,23 @@ export async function receiveAlchemyWebhook(
       );
     else added.push(transfer);
   }
-  const stored = await storeTransfers(env, network, added);
+  // Without a budget it always stores.
+  const stored = (await storeTransfers(env, network, added))!;
   const statements = [...removed, ...stored.statements];
   if (statements.length === 0) return json({});
   const results = await env.WALLET_DB.batch(statements);
   // Webhooks retry and the reconciliation may have stored it first: notify new rows only.
   const fresh = stored.kept.filter((_, i) => results[removed.length + i].meta.changes > 0);
-  await notifyReceived(env, config, fresh).catch((error: unknown) => console.error(error));
+  await notifyReceived(
+    env,
+    config,
+    fresh.map((transfer) => ({ ...transfer, coin: coinOf(network, transfer.token) ?? undefined })),
+  ).catch((error: unknown) => console.error(error));
   return json({});
 }
 
 /** Adds the addresses of new members to every network's webhook, so their activity is delivered. */
-export async function watchMembers(env: Env, config: Config): Promise<void> {
+export async function watchMembers(env: Env, config: Config, budget: Budget): Promise<void> {
   const webhooks = [...config.networks.values()].flatMap((network) =>
     network.webhook ? [network.webhook.id] : [],
   );
@@ -111,7 +118,7 @@ export async function watchMembers(env: Env, config: Config): Promise<void> {
   const { results } = await env.WALLET_DB.prepare(
     'SELECT address FROM members WHERE watched = 0 LIMIT 1000',
   ).all<{ address: string }>();
-  if (results.length === 0) return;
+  if (results.length === 0 || !budget.take(webhooks.length)) return;
   const addresses = results.map((row) => row.address);
   for (const webhookId of webhooks) {
     const response = await fetch('https://dashboard.alchemy.com/api/update-webhook-addresses', {

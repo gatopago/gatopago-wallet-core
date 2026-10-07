@@ -1,9 +1,9 @@
 import { getAddress, isAddressEqual, isHex, type Address, type Hex, type PublicClient } from 'viem';
 import { walletContracts } from '@gatopago/shared/networks';
-import { gatopagoAccountFactoryAbi, verifyApproval } from '@gatopago/shared/wallet';
+import { gatopagoAccountFactoryAbi, ownersAfter, verifyApproval } from '@gatopago/shared/wallet';
 import type { Config } from './config';
 import { HttpError, json, rateLimit, readJson } from './http';
-import { memberByAddress } from './members';
+import { memberByAddress, type Member } from './members';
 import { authenticate } from './session';
 
 /**
@@ -92,4 +92,31 @@ async function provenInitialOwners(
   if (getAddress(derived) !== getAddress(account))
     throw new HttpError(400, 'INITIAL_OWNERS_INVALID');
   return owners;
+}
+
+/**
+ * The account's owners now: its initial owners (proven against the factory when the database does
+ * not know them yet, then kept) and the approved changes.
+ */
+export async function currentOwners(
+  env: Env,
+  config: Config,
+  member: Member,
+  claimedInitialOwners: unknown,
+): Promise<Hex[]> {
+  const client = [...config.networks.values()][0].client;
+  const initialOwners =
+    member.initialOwners ??
+    (await provenInitialOwners(client, member.address, claimedInitialOwners as Hex[] | undefined));
+  if (!member.initialOwners)
+    await env.WALLET_DB.prepare(
+      'UPDATE members SET initial_owners = ? WHERE address = ? AND initial_owners IS NULL',
+    )
+      .bind(JSON.stringify(initialOwners), member.address.toLowerCase())
+      .run();
+  const changes = await approvals(env, member.address);
+  return ownersAfter(
+    initialOwners,
+    changes.map((approval) => approval.call),
+  );
 }

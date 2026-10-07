@@ -1,5 +1,4 @@
 import { formatUnits } from 'viem';
-import type { Transfer } from './activity';
 import type { Config } from './config';
 import { HttpError, json, readJson } from './http';
 import { signedInMember } from './profile';
@@ -84,24 +83,40 @@ async function firebaseAccessToken(account: NonNullable<Config['firebase']>): Pr
   return access_token;
 }
 
+/** EVM addresses are kept lowercase; Stellar strkeys as they are. */
+const stored = (address: string) => (address.startsWith('0x') ? address.toLowerCase() : address);
 const short = (address: string) => `${address.slice(0, 6)}…${address.slice(-4)}`;
 
 /**
  * Notifies members of the transfers they just received, on every device they enabled. Only
  * the fact and the amount travel: the app reads the details from the chain and the API.
  */
-export async function notifyReceived(env: Env, config: Config, transfers: readonly Transfer[]) {
+export async function notifyReceived(
+  env: Env,
+  config: Config,
+  transfers: readonly {
+    from: string;
+    to: string;
+    value: bigint;
+    /** USDC unless said otherwise (AUSD), and its decimals. */
+    coin?: { symbol: string; decimals: number };
+  }[],
+) {
   if (!config.firebase || transfers.length === 0) return;
   for (const transfer of transfers) {
+    // Addresses are EVM accounts or members' Stellar accounts.
     const { results } = await env.WALLET_DB.prepare(
       `SELECT push_tokens.token, push_tokens.language, sender.username AS sender
        FROM members JOIN push_tokens ON push_tokens.member_id = members.id
-       LEFT JOIN members AS sender ON sender.address = ?
-       WHERE members.address = ?`,
+       LEFT JOIN members AS sender ON sender.address =
+         COALESCE((SELECT member_address FROM stellar_accounts WHERE address = ?1), ?1)
+       WHERE members.address =
+         COALESCE((SELECT member_address FROM stellar_accounts WHERE address = ?2), ?2)`,
     )
-      .bind(transfer.from.toLowerCase(), transfer.to.toLowerCase())
+      .bind(stored(transfer.from), stored(transfer.to))
       .all<{ token: string; language: string; sender: string | null }>();
-    const amount = Number(formatUnits(transfer.value, 6));
+    const coin = transfer.coin ?? { symbol: 'USDC', decimals: 6 };
+    const amount = Number(formatUnits(transfer.value, coin.decimals));
     for (const { token, language, sender } of results) {
       const en = language === 'en';
       const from = sender ? `@${sender}` : short(transfer.from);
@@ -110,8 +125,8 @@ export async function notifyReceived(env: Env, config: Config, transfers: readon
         data: {
           type: 'movement',
           title: en
-            ? `You received ${amount.toLocaleString('en', { minimumFractionDigits: 2 })} USDC`
-            : `Recibiste ${amount.toLocaleString('es', { minimumFractionDigits: 2 })} USDC`,
+            ? `You received ${amount.toLocaleString('en', { minimumFractionDigits: 2 })} ${coin.symbol}`
+            : `Recibiste ${amount.toLocaleString('es', { minimumFractionDigits: 2 })} ${coin.symbol}`,
           body: en ? `From ${from}` : `De ${from}`,
           link: '/statement',
         },

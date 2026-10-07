@@ -7,14 +7,17 @@ import {
 } from 'viem/account-abstraction';
 import { gatopagoGasConfig } from '@gatopago/shared/bundler';
 import { walletContracts } from '@gatopago/shared/networks';
-import { sponsorshipPaymasterData, sponsorshipTypedData } from '@gatopago/shared/wallet';
+import {
+  SPONSORSHIP_SECONDS,
+  sponsorshipPaymasterData,
+  sponsorshipTypedData,
+} from '@gatopago/shared/wallet';
 import type { Config, Network } from './config';
 import { enabledNetwork, HttpError, json, readJson } from './http';
 import { authenticate } from './session';
 
 /** Ceiling on the gas a single sponsored operation may declare (deployment and batches fit). */
 const MAX_SPONSORED_GAS = 3_000_000n;
-const SPONSORSHIP_SECONDS = 300;
 const paymasterGas = {
   paymasterVerificationGasLimit: gatopagoGasConfig.paymasterVerificationGasLimit,
   paymasterPostOpGasLimit: gatopagoGasConfig.paymasterPostOpGasLimit,
@@ -85,7 +88,8 @@ async function assertReasonableGas(operation: UserOperation<'0.9'>, network: Net
     throw new HttpError(400, 'GAS_NOT_SPONSORED');
 }
 
-async function consumeDailyBudget(env: Env, config: Config, account: Address) {
+/** Counts one sponsored operation (any network) against the account's daily budget. */
+export async function consumeDailyBudget(env: Env, config: Config, account: Address) {
   const result = await env.WALLET_DB.prepare(
     `INSERT INTO sponsorship_usage (account, day, operations) VALUES (?, ?, 1)
      ON CONFLICT (account, day) DO UPDATE SET operations = operations + 1 WHERE operations < ?`,

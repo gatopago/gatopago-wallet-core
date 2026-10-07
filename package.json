@@ -1,5 +1,6 @@
 {
   "name": "gatopago-wallet-core",
+  "license": "MIT",
   "type": "module",
   "engines": {
     "node": "24.x"
@@ -17,7 +18,8 @@
     "build": "wrangler deploy --dry-run --outdir .wrangler/build"
   },
   "dependencies": {
-    "@gatopago/shared": "file:vendor/gatopago-shared-6.0.0.tgz",
+    "@gatopago/shared": "file:vendor/gatopago-shared-6.10.0.tgz",
+    "@stellar/stellar-sdk": "17.2.0",
     "jose": "^6.2.10",
     "viem": "2.55.19"
   },

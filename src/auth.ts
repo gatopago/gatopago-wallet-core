@@ -2,7 +2,7 @@ import type { Hex } from 'viem';
 import { generateSiweNonce, parseSiweMessage, verifySiweMessage } from 'viem/siwe';
 import type { Config } from './config';
 import { HttpError, json, rateLimit, readJson } from './http';
-import { admit, memberByAddress } from './members';
+import { admit, admitOpen, memberByAddress } from './members';
 import { issueSession } from './session';
 
 const NONCE_SECONDS = 300;
@@ -34,7 +34,11 @@ export async function createSession(request: Request, env: Env, config: Config):
     throw new HttpError(400, 'INVALID_REQUEST');
 
   const message = parseSiweMessage(body.message);
-  const domain = new URL(config.webOrigin).host;
+  // The app signs in to the wallet; GatoPago Business, with the same passkeys, gets a session only
+  // Flow accepts, and only for existing members.
+  const business = !!config.businessOrigin && message.uri === config.businessOrigin;
+  const origin = business ? config.businessOrigin! : config.webOrigin;
+  const domain = new URL(origin).host;
   const network = config.networks.get(`eip155:${message.chainId}`);
   if (
     !message.address ||
@@ -42,7 +46,7 @@ export async function createSession(request: Request, env: Env, config: Config):
     !message.issuedAt ||
     !network ||
     message.domain !== domain ||
-    message.uri !== config.webOrigin ||
+    message.uri !== origin ||
     Math.abs(Date.now() - message.issuedAt.getTime()) > NONCE_SECONDS * 1000
   )
     throw new HttpError(400, 'INVALID_MESSAGE');
@@ -63,21 +67,34 @@ export async function createSession(request: Request, env: Env, config: Config):
     throw new HttpError(401, 'SIGNATURE_INVALID');
 
   let member = await memberByAddress(env.WALLET_DB, message.address);
+  if (!member && business) throw new HttpError(403, 'ACCOUNT_NOT_FOUND');
   if (!member) {
-    if (!body.invite || !body.turnstile) throw new HttpError(403, 'INVITE_REQUIRED');
+    // An invitation sent while sign-up is open still counts for whoever issued it.
+    if ((config.inviteOnly && !body.invite) || !body.turnstile)
+      throw new HttpError(403, 'INVITE_REQUIRED');
     if (!(await isHuman(config, body.turnstile, request.headers.get('CF-Connecting-IP'))))
       throw new HttpError(403, 'TURNSTILE_FAILED');
-    if (!(await admit(env.WALLET_DB, `usr_${crypto.randomUUID()}`, message.address, body.invite)))
-      throw new HttpError(403, 'INVITE_INVALID');
+    const id = `usr_${crypto.randomUUID()}`;
+    if (
+      !(await (body.invite
+        ? admit(env.WALLET_DB, id, message.address, body.invite)
+        : admitOpen(env.WALLET_DB, id, message.address)))
+    )
+      throw new HttpError(403, body.invite ? 'INVITE_INVALID' : 'ALREADY_MEMBER');
     member = await memberByAddress(env.WALLET_DB, message.address);
   }
-  const session = await issueSession(config, member!);
+  const session = await issueSession(config, member!, business ? 'business' : 'wallet');
   return json({
     token: session.token,
     expires_at: session.expiresAt,
     user_id: member!.id,
     address: message.address,
   });
+}
+
+/** `GET /app/v1/auth/signup`: whether new accounts need an invitation now (`INVITE_ONLY`). */
+export function readSignup(config: Config): Response {
+  return json({ invite_required: config.inviteOnly });
 }
 
 async function isHuman(config: Config, token: string, ip: string | null): Promise<boolean> {

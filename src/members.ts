@@ -50,6 +50,20 @@ export async function memberByUsername(db: D1Database, username: string): Promis
  * Admits `address` with an unused, unexpired invitation, atomically: the batch fails as a whole if
  * the invitation was consumed concurrently (`members.invite_code` is unique).
  */
+/**
+ * Admits `address` without an invitation while sign-up is open (`INVITE_ONLY=off`): an invitation
+ * issued by `open-signup` and consumed at once records how the member joined.
+ */
+export async function admitOpen(db: D1Database, id: string, address: Address): Promise<boolean> {
+  const code = `open_${crypto.randomUUID()}`;
+  const now = Math.floor(Date.now() / 1000);
+  await db
+    .prepare('INSERT INTO invites (code, issued_by, created_at, expires_at) VALUES (?, ?, ?, ?)')
+    .bind(code, 'open-signup', now, now + 300)
+    .run();
+  return admit(db, id, address, code);
+}
+
 export async function admit(
   db: D1Database,
   id: string,

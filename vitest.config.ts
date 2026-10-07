@@ -1,8 +1,17 @@
 import { generateKeyPairSync } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { cloudflareTest, readD1Migrations } from '@cloudflare/vitest-pool-workers';
+import { Keypair } from '@stellar/stellar-sdk';
 import { defineConfig } from 'vitest/config';
 import { FORK_RPC, RELAYER_KEY, SPONSOR_KEY } from './test/fork.ts';
+
+/** The Stellar sponsor runs on testnet (Stellar has no forks), funded by Friendbot for each run. */
+async function stellarSponsor() {
+  const keypair = Keypair.random();
+  const response = await fetch(`https://friendbot.stellar.org?addr=${keypair.publicKey()}`);
+  if (!response.ok) throw new Error(`Friendbot: ${response.status}`);
+  return keypair.secret();
+}
 
 export default defineConfig({
   plugins: [
@@ -35,6 +44,7 @@ export default defineConfig({
               type: 'pkcs8',
             }),
           }),
+          STELLAR_SECRET_KEY: await stellarSponsor(),
           TEST_MIGRATIONS: await readD1Migrations(
             fileURLToPath(new URL('./migrations', import.meta.url)),
           ),

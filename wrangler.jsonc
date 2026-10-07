@@ -1,96 +1,100 @@
 {
-	"$schema": "./node_modules/wrangler/config-schema.json",
-	"name": "gatopago-wallet-core",
-	"account_id": "c26e82cd341803c9136e19e668da67c6",
-	"main": "src/index.ts",
-	"compatibility_date": "2026-09-08",
-	"compatibility_flags": [
-		"nodejs_compat"
-	],
-	"workers_dev": false,
-	"preview_urls": false,
-	"vars": {
-		"GATOPAGO_ENVIRONMENT": "production",
-		"WEB_ORIGIN": "https://gatopago.com",
-		"WALLET_NETWORKS": "eip155:421614,eip155:43113,eip155:10143",
-		"SPONSORED_OPERATIONS_PER_DAY": "50",
-		// {"<network>": {"url", "range", "start"}}: where the reconciliation reads Transfer logs (default:
-		// WALLET_RPC_URLS, 100 blocks per query, from the latest block). See README.
-		"INDEX_SOURCES": "{\"eip155:421614\":{\"url\":\"https://sepolia-rollup.arbitrum.io/rpc\",\"range\":1000},\"eip155:43113\":{\"url\":\"https://api.avax-test.network/ext/bc/C/rpc\",\"range\":2000},\"eip155:10143\":{\"url\":\"https://testnet-rpc.monad.xyz\",\"range\":100}}"
-	},
-	// Secrets: WALLET_RPC_URLS, RELAYER_PRIVATE_KEY, SPONSOR_PRIVATE_KEY, SESSION_PRIVATE_JWK,
-	// TURNSTILE_SECRET_KEY, and optionally ALCHEMY_WEBHOOKS, ALCHEMY_AUTH_TOKEN (see .dev.vars.example).
-	"routes": [
-		{
-			"pattern": "api.gatopago.com",
-			"custom_domain": true
-		}
-	],
-	"d1_databases": [
-		{
-			"binding": "WALLET_DB",
-			"database_name": "gatopago",
-			"database_id": "dee81981-14a9-472d-ba96-34630b68c8f1",
-			"migrations_dir": "migrations"
-		}
-	],
-	"durable_objects": {
-		"bindings": [
-			{
-				"name": "BUNDLER",
-				"class_name": "Bundler"
-			}
-		]
-	},
-	"ratelimits": [
-		{
-			"name": "RATE_LIMITER",
-			"namespace_id": "1001",
-			"simple": {
-				"limit": 60,
-				"period": 60
-			}
-		}
-	],
-	"triggers": {
-		"crons": [
-			"* * * * *",
-			"*/10 * * * *",
-			"0 * * * *"
-		]
-	},
-	"migrations": [
-		{
-			"tag": "v1_event_job_scheduler",
-			"new_sqlite_classes": [
-				"EventJobScheduler"
-			]
-		},
-		{
-			"tag": "v2_rpc_admission",
-			"new_sqlite_classes": [
-				"RpcAdmissionController"
-			]
-		},
-		{
-			"tag": "v3_wallet_core",
-			"deleted_classes": [
-				"EventJobScheduler",
-				"RpcAdmissionController"
-			]
-		},
-		{
-			"tag": "v4_bundler",
-			"new_sqlite_classes": [
-				"Bundler"
-			]
-		}
-	],
-	"observability": {
-		"enabled": true,
-		"logs": {
-			"enabled": true,
-			"invocation_logs": true
-		}
-	}
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "gatopago-wallet-core",
+  "account_id": "c26e82cd341803c9136e19e668da67c6",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-08",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "vars": {
+    "GATOPAGO_ENVIRONMENT": "production",
+    "WEB_ORIGIN": "https://gatopago.com",
+    // GatoPago Business, the merchant console: it signs in with the same passkeys or with a QR
+    // approved from the app, and gets sessions only Flow accepts. Empty turns it off.
+    "BUSINESS_ORIGIN": "https://business.gatopago.com",
+    "WALLET_NETWORKS": "eip155:421614,eip155:43113,eip155:10143",
+    "SPONSORED_OPERATIONS_PER_DAY": "50",
+    // "on": new accounts need an invitation. "off": anyone who passes Turnstile can join (judges,
+    // open betas); invitations still count when used. Existing members are never affected.
+    "INVITE_ONLY": "on",
+    // External requests per cron run: Workers Free allows 50 per invocation (Paid: 1000).
+    "SUBREQUESTS_PER_RUN": "45",
+    // Stellar network of members' Stellar accounts; Stellar stays off until STELLAR_SECRET_KEY is set.
+    "STELLAR_NETWORK": "stellar:testnet",
+    // {"<network>": {"url", "range", "start"}}: where the reconciliation reads Transfer logs (default:
+    // WALLET_RPC_URLS, 100 blocks per query, from the latest block). See README.
+    "INDEX_SOURCES": "{\"eip155:421614\":{\"url\":\"https://sepolia-rollup.arbitrum.io/rpc\",\"range\":1000},\"eip155:43113\":{\"url\":\"https://api.avax-test.network/ext/bc/C/rpc\",\"range\":2000},\"eip155:10143\":{\"url\":\"https://testnet-rpc.monad.xyz\",\"range\":100}}"
+  },
+  // Secrets: WALLET_RPC_URLS, RELAYER_PRIVATE_KEY, SPONSOR_PRIVATE_KEY, SESSION_PRIVATE_JWK,
+  // TURNSTILE_SECRET_KEY, and optionally ALCHEMY_WEBHOOKS, ALCHEMY_AUTH_TOKEN, FIREBASE_SERVICE_ACCOUNT,
+  // STELLAR_SECRET_KEY, STELLAR_RPC_URL (see .dev.vars.example).
+  "routes": [
+    {
+      "pattern": "api.gatopago.com",
+      "custom_domain": true
+    }
+  ],
+  "d1_databases": [
+    {
+      "binding": "WALLET_DB",
+      "database_name": "gatopago",
+      "database_id": "dee81981-14a9-472d-ba96-34630b68c8f1",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "BUNDLER",
+        "class_name": "Bundler"
+      },
+      {
+        "name": "STELLAR_RELAYER",
+        "class_name": "StellarRelayer"
+      }
+    ]
+  },
+  "ratelimits": [
+    {
+      "name": "RATE_LIMITER",
+      "namespace_id": "1001",
+      "simple": {
+        "limit": 60,
+        "period": 60
+      }
+    }
+  ],
+  "triggers": {
+    "crons": ["* * * * *", "*/10 * * * *", "0 * * * *"]
+  },
+  "migrations": [
+    {
+      "tag": "v1_event_job_scheduler",
+      "new_sqlite_classes": ["EventJobScheduler"]
+    },
+    {
+      "tag": "v2_rpc_admission",
+      "new_sqlite_classes": ["RpcAdmissionController"]
+    },
+    {
+      "tag": "v3_wallet_core",
+      "deleted_classes": ["EventJobScheduler", "RpcAdmissionController"]
+    },
+    {
+      "tag": "v4_bundler",
+      "new_sqlite_classes": ["Bundler"]
+    },
+    {
+      "tag": "v5_stellar_relayer",
+      "new_sqlite_classes": ["StellarRelayer"]
+    }
+  ],
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+      "invocation_logs": true
+    }
+  }
 }

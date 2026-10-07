@@ -15,7 +15,7 @@ export class WalletIdentity extends WorkerEntrypoint<Env> {
       const settings = config(this.env);
       if (request.headers.get('X-GatoPago-Environment') !== settings.environment)
         return json({ error_code: 'IDENTITY_UNAVAILABLE' }, 503);
-      const session = await authenticate(request, settings);
+      const session = await authenticate(request, settings, { business: true });
       return json({
         user_id: session.userId,
         environment: settings.environment,

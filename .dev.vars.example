@@ -16,3 +16,9 @@ ALCHEMY_WEBHOOKS=""
 ALCHEMY_AUTH_TOKEN=""
 # Optional: Firebase service account JSON (project_id, client_email, private_key) for payment notifications.
 FIREBASE_SERVICE_ACCOUNT=""
+# Optional, enables Stellar: secret key (S…) of the Stellar account that creates members' Stellar
+# accounts, pays their fees and relays CCTP transfers toward Stellar. Members' Stellar addresses
+# derive from it: never change it once members have one.
+STELLAR_SECRET_KEY=""
+# Optional: Stellar RPC (default: the network's public RPC).
+STELLAR_RPC_URL=""

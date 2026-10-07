@@ -1,6 +1,12 @@
+import { Keypair, rpc } from '@stellar/stellar-sdk';
 import { createPublicClient, http, isHex, type Hex, type PublicClient } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
-import { walletNetwork, type WalletNetwork } from '@gatopago/shared/networks';
+import {
+  stellarNetwork,
+  walletNetwork,
+  type StellarNetwork,
+  type WalletNetwork,
+} from '@gatopago/shared/networks';
 
 export interface Network extends WalletNetwork {
   readonly id: string;
@@ -21,16 +27,32 @@ export interface Network extends WalletNetwork {
 export interface Config {
   readonly environment: string;
   readonly webOrigin: string;
+  /** GatoPago Business (merchant console), or `null` when off. */
+  readonly businessOrigin: string | null;
   readonly networks: ReadonlyMap<string, Network>;
   readonly relayerKey: Hex;
   readonly sponsor: ReturnType<typeof privateKeyToAccount>;
   readonly sessionJwk: JsonWebKey;
   readonly turnstileSecret: string;
   readonly sponsoredOperationsPerDay: number;
+  /** External requests one cron run may make (Workers Free: 50 per invocation). */
+  readonly subrequestsPerRun: number;
+  /** `INVITE_ONLY`: whether new accounts need an invitation (Turnstile is always required). */
+  readonly inviteOnly: boolean;
   /** Alchemy auth token that adds members' addresses to the webhooks. */
   readonly alchemyAuthToken: string | null;
   /** Firebase service account that sends payment notifications through FCM. */
   readonly firebase: { projectId: string; clientEmail: string; privateKey: string } | null;
+  /**
+   * Stellar, enabled by `STELLAR_SECRET_KEY`: the key that creates members' Stellar accounts (their
+   * addresses derive from it), pays their fees and mints CCTP transfers toward Stellar.
+   */
+  readonly stellar: {
+    readonly id: string;
+    readonly network: StellarNetwork;
+    readonly server: rpc.Server;
+    readonly keypair: Keypair;
+  } | null;
 }
 
 class ConfigError extends Error {}
@@ -100,6 +122,25 @@ function firebase(value: string | undefined): Config['firebase'] {
   return { projectId: project_id, clientEmail: client_email, privateKey: private_key };
 }
 
+function stellar(env: Env): Config['stellar'] {
+  if (!env.STELLAR_SECRET_KEY) return null;
+  const id = required(env, 'STELLAR_NETWORK');
+  let keypair: Keypair;
+  try {
+    keypair = Keypair.fromSecret(env.STELLAR_SECRET_KEY);
+  } catch {
+    throw new ConfigError('INVALID_STELLAR_SECRET_KEY');
+  }
+  const network = stellarNetwork(id);
+  const url = env.STELLAR_RPC_URL ? rpcUrl(env.STELLAR_RPC_URL, id) : network.rpcUrl;
+  return {
+    id,
+    network,
+    keypair,
+    server: new rpc.Server(url, { allowHttp: url.startsWith('http:') }),
+  };
+}
+
 /** Every setting the Worker needs, validated together; a missing or invalid one stops the request. */
 export function config(env: Env): Config {
   const urls: Record<string, unknown> = JSON.parse(required(env, 'WALLET_RPC_URLS'));
@@ -123,19 +164,28 @@ export function config(env: Env): Config {
     });
   }
   const webOrigin = new URL(required(env, 'WEB_ORIGIN')).origin;
+  const subrequestsPerRun = Number(required(env, 'SUBREQUESTS_PER_RUN'));
+  if (!Number.isSafeInteger(subrequestsPerRun) || subrequestsPerRun < 5)
+    throw new ConfigError('INVALID_SUBREQUESTS_PER_RUN');
+  const inviteOnly = required(env, 'INVITE_ONLY');
+  if (inviteOnly !== 'on' && inviteOnly !== 'off') throw new ConfigError('INVALID_INVITE_ONLY');
   const operations = Number(required(env, 'SPONSORED_OPERATIONS_PER_DAY'));
   if (!Number.isSafeInteger(operations) || operations < 1)
     throw new ConfigError('INVALID_SPONSORED_OPERATIONS_PER_DAY');
   return {
     environment: required(env, 'GATOPAGO_ENVIRONMENT'),
     webOrigin,
+    businessOrigin: env.BUSINESS_ORIGIN ? new URL(env.BUSINESS_ORIGIN).origin : null,
     networks,
     relayerKey: privateKey(env, 'RELAYER_PRIVATE_KEY'),
     sponsor: privateKeyToAccount(privateKey(env, 'SPONSOR_PRIVATE_KEY')),
     sessionJwk: JSON.parse(required(env, 'SESSION_PRIVATE_JWK')),
     turnstileSecret: required(env, 'TURNSTILE_SECRET_KEY'),
     sponsoredOperationsPerDay: operations,
+    subrequestsPerRun,
+    inviteOnly: inviteOnly === 'on',
     alchemyAuthToken: env.ALCHEMY_AUTH_TOKEN || null,
     firebase: firebase(env.FIREBASE_SERVICE_ACCOUNT),
+    stellar: stellar(env),
   };
 }
