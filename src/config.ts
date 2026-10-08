@@ -19,6 +19,15 @@ export interface Network extends WalletNetwork {
     readonly range: bigint;
     /** First block read on a network not read yet; otherwise the latest block. */
     readonly start: bigint | null;
+    /**
+     * Envio HyperSync, when configured with `ENVIO_API_TOKEN`: it reads instead of `client`, and
+     * `since` (the factory's deployment block) is where members' history starts.
+     */
+    readonly hypersync: {
+      readonly url: string;
+      readonly token: string;
+      readonly since: bigint;
+    } | null;
   };
   /** Alchemy Address Activity webhook of this network, when configured. */
   readonly webhook: { readonly id: string; readonly signingKey: string } | null;
@@ -86,11 +95,20 @@ const blockNumber = (value: unknown, name: string, id: string): bigint | null =>
   return BigInt(value as number);
 };
 
+type IndexSource = {
+  url?: unknown;
+  range?: unknown;
+  start?: unknown;
+  hypersync?: unknown;
+  since?: unknown;
+};
+
 function indexSource(
   network: WalletNetwork,
   id: string,
   fallbackUrl: string,
-  source: { url?: unknown; range?: unknown; start?: unknown } = {},
+  envioToken: string | undefined,
+  source: IndexSource = {},
 ): Network['index'] {
   const url = source.url === undefined ? fallbackUrl : rpcUrl(source.url, id);
   const range = blockNumber(source.range, 'RANGE', id) ?? 100n;
@@ -99,6 +117,14 @@ function indexSource(
     client: createPublicClient({ chain: network.chain, transport: http(url) }),
     range,
     start: blockNumber(source.start, 'START', id),
+    hypersync:
+      source.hypersync === undefined || !envioToken
+        ? null
+        : {
+            url: new URL(rpcUrl(source.hypersync, id)).origin,
+            token: envioToken,
+            since: blockNumber(source.since, 'SINCE', id) ?? 0n,
+          },
   };
 }
 
@@ -144,9 +170,7 @@ function stellar(env: Env): Config['stellar'] {
 /** Every setting the Worker needs, validated together; a missing or invalid one stops the request. */
 export function config(env: Env): Config {
   const urls: Record<string, unknown> = JSON.parse(required(env, 'WALLET_RPC_URLS'));
-  const sources: Record<string, { url?: unknown; range?: unknown; start?: unknown }> = JSON.parse(
-    env.INDEX_SOURCES || '{}',
-  );
+  const sources: Record<string, IndexSource> = JSON.parse(env.INDEX_SOURCES || '{}');
   const webhooks: Record<string, { id?: unknown; signing_key?: unknown }> = JSON.parse(
     env.ALCHEMY_WEBHOOKS || '{}',
   );
@@ -159,7 +183,7 @@ export function config(env: Env): Config {
       id: id.trim(),
       rpcUrl: url,
       client: createPublicClient({ chain: network.chain, transport: http(url) }),
-      index: indexSource(network, id.trim(), url, sources[id.trim()]),
+      index: indexSource(network, id.trim(), url, env.ENVIO_API_TOKEN, sources[id.trim()]),
       webhook: webhook(webhooks[id.trim()], id),
     });
   }

@@ -22,3 +22,6 @@ FIREBASE_SERVICE_ACCOUNT=""
 STELLAR_SECRET_KEY=""
 # Optional: Stellar RPC (default: the network's public RPC).
 STELLAR_RPC_URL=""
+# Optional: Envio API token (envio.dev → API tokens). With it, the networks whose INDEX_SOURCES name a
+# `hypersync` URL are reconciled through Envio HyperSync, and members' earlier history is read.
+ENVIO_API_TOKEN=""

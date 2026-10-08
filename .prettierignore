@@ -1,0 +1,4 @@
+vendor/
+pnpm-lock.yaml
+worker-configuration.d.ts
+.wrangler/

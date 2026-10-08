@@ -10,19 +10,27 @@ import { swapPools } from '@gatopago/shared/swap';
 import type { Budget } from './budget';
 import type { Config, Network } from './config';
 import { HttpError, json } from './http';
+import { hypersyncHeight, hypersyncTransfers, NATIVE_LOG_INDEX } from './hypersync';
 import { signedInMember } from './profile';
+import { notifyReceived } from './push';
+
+export { NATIVE_LOG_INDEX };
 
 export const transferEvent = parseAbiItem(
   'event Transfer(address indexed from, address indexed to, uint256 value)',
 );
 
-/** A USDC Transfer log, from a webhook or from the chain. */
+/**
+ * A movement of a member's coins, from a webhook or from the chain: a token's Transfer log, or the
+ * value of a transaction sent straight to them in the network's own coin (`token` null, its
+ * `logIndex` `NATIVE_LOG_INDEX`).
+ */
 export interface Transfer {
   transactionHash: Hex;
   logIndex: number;
   blockNumber: bigint;
-  /** The token contract that emitted it: USDC or another configured coin. */
-  token: Address;
+  /** The token contract that emitted it (USDC or another configured coin), or null for the native coin. */
+  token: Address | null;
   from: Address;
   to: Address;
   value: bigint;
@@ -42,9 +50,14 @@ export function networkCoins(
   ];
 }
 
-/** The configured coin a Transfer log came from, or null for any other token. */
-export const coinOf = (network: Network, token: Address) =>
-  networkCoins(network).find((coin) => isAddressEqual(coin.address, token)) ?? null;
+/** The coin a transfer moved: a configured token, the native coin (`null`), or null for any other. */
+export const coinOf = (
+  network: Network,
+  token: Address | null,
+): { symbol: string; decimals: number } | null =>
+  token === null
+    ? network.chain.nativeCurrency
+    : (networkCoins(network).find((coin) => isAddressEqual(coin.address, token)) ?? null);
 
 /** Ranges read per network and run, so a run stays within the Worker's subrequest budget. */
 const ROUNDS = 20;
@@ -96,7 +109,13 @@ export async function storeTransfers(
   network: Network,
   transfers: readonly Transfer[],
   budget?: Budget,
-): Promise<{ kept: Transfer[]; statements: D1PreparedStatement[] } | null> {
+  /** Block times already known (HyperSync returns them): those blocks are not read again. */
+  known: ReadonlyMap<bigint, number> = new Map(),
+): Promise<{
+  kept: Transfer[];
+  statements: D1PreparedStatement[];
+  times: Map<bigint, number>;
+} | null> {
   const members = await membersAmong(
     env,
     transfers.flatMap(({ from, to }) => [from.toLowerCase(), to.toLowerCase()]),
@@ -104,8 +123,10 @@ export async function storeTransfers(
   const kept = transfers.filter(
     ({ from, to }) => members.has(from.toLowerCase()) || members.has(to.toLowerCase()),
   );
-  const times = new Map<bigint, number>();
-  const blocks = new Set(kept.map((transfer) => transfer.blockNumber));
+  const times = new Map(known);
+  const blocks = new Set(
+    kept.map((transfer) => transfer.blockNumber).filter((block) => !times.has(block)),
+  );
   // Each block's timestamp is one request: without room for all of them, nothing is stored yet.
   if (budget && !budget.take(blocks.size)) return null;
   for (const block of blocks)
@@ -128,7 +149,7 @@ export async function storeTransfers(
       coinOf(network, transfer.token)?.symbol ?? 'USDC',
     ),
   );
-  return { kept, statements };
+  return { kept, statements, times };
 }
 
 /**
@@ -143,6 +164,16 @@ export async function reconcileTransfers(env: Env, config: Config, budget: Budge
   for (let i = 0; i < results.length; i += ADDRESSES_PER_QUERY)
     groups.push(results.slice(i, i + ADDRESSES_PER_QUERY).map((row) => row.address));
   for (const network of config.networks.values()) {
+    if (network.index.hypersync) {
+      const read = await reconcileWithHypersync(env, config, network, results, budget).catch(
+        (error: unknown) => {
+          // HyperSync failed: this network is read from its RPC, as without it.
+          console.error(error);
+          return false;
+        },
+      );
+      if (read) continue;
+    }
     if (!budget.take()) return;
     const { client, range, start } = network.index;
     const latest = await client.getBlockNumber();
@@ -181,15 +212,135 @@ export async function reconcileTransfers(env: Env, config: Config, budget: Budge
       );
       // Out of requests: this range is read again on the next run.
       if (!stored) return;
-      await env.WALLET_DB.batch([
+      const results = await env.WALLET_DB.batch([
         ...stored.statements,
-        env.WALLET_DB.prepare(
-          `INSERT INTO index_cursors (network, block) VALUES (?, ?)
-           ON CONFLICT (network) DO UPDATE SET block = excluded.block`,
-        ).bind(network.id, Number(to)),
+        saveCursor(env, network, to),
       ]);
+      await notifyFound(env, config, network, stored, results);
       from = to + 1n;
     }
+  }
+}
+
+/** How recent a transfer the reconciliation finds must be to be notified: older ones are history. */
+const NOTIFY_SECONDS = 3_600;
+
+/**
+ * Notifies the recent transfers the reconciliation stored for the first time: those a webhook
+ * missed. One already stored by a webhook was notified then.
+ */
+async function notifyFound(
+  env: Env,
+  config: Config,
+  network: Network,
+  stored: NonNullable<Awaited<ReturnType<typeof storeTransfers>>>,
+  results: D1Result[],
+) {
+  const since = Math.floor(Date.now() / 1000) - NOTIFY_SECONDS;
+  const found = stored.kept.filter(
+    (transfer, i) =>
+      results[i].meta.changes > 0 && stored.times.get(transfer.blockNumber)! >= since,
+  );
+  await notifyReceived(
+    env,
+    config,
+    found.map((transfer) => ({ ...transfer, coin: coinOf(network, transfer.token) ?? undefined })),
+  ).catch((error: unknown) => console.error(error));
+}
+
+/** The block the reconciliation of `network` read last, or null before its first run. */
+async function cursorOf(env: Env, network: Network) {
+  const block = await env.WALLET_DB.prepare('SELECT block FROM index_cursors WHERE network = ?')
+    .bind(network.id)
+    .first<number>('block');
+  return block === null ? null : BigInt(block);
+}
+
+const saveCursor = (env: Env, network: Network, block: bigint) =>
+  env.WALLET_DB.prepare(
+    `INSERT INTO index_cursors (network, block) VALUES (?, ?)
+     ON CONFLICT (network) DO UPDATE SET block = excluded.block`,
+  ).bind(network.id, Number(block));
+
+/**
+ * The reconciliation of one network through Envio HyperSync: one request reads every member's
+ * transfers over as many blocks as HyperSync answers, with their times. False when the network has
+ * no HyperSync; a failure throws, and the caller reads the RPC instead.
+ */
+async function reconcileWithHypersync(
+  env: Env,
+  config: Config,
+  network: Network,
+  members: readonly { address: Address }[],
+  budget: Budget,
+): Promise<boolean> {
+  const source = network.index.hypersync;
+  if (!source) return false;
+  const cursor = await cursorOf(env, network);
+  let from = cursor === null ? network.index.start : cursor + 1n;
+  if (from === null) {
+    // First run without a start block: from the latest block on.
+    if (budget.take()) await saveCursor(env, network, await hypersyncHeight(source)).run();
+    return true;
+  }
+  if (members.length === 0) return true;
+  for (let round = 0; round < ROUNDS; round++) {
+    if (!budget.take()) return true;
+    const page = await hypersyncTransfers(source, {
+      coins: networkCoins(network).map((coin) => coin.address),
+      addresses: members.map((member) => member.address),
+      fromBlock: from,
+    });
+    if (page.nextBlock <= from) return true;
+    const stored = await storeTransfers(env, network, page.transfers, budget, page.times);
+    // Out of requests: this range is read again on the next run.
+    if (!stored) return true;
+    const results = await env.WALLET_DB.batch([
+      ...stored.statements,
+      saveCursor(env, network, page.nextBlock - 1n),
+    ]);
+    await notifyFound(env, config, network, stored, results);
+    from = page.nextBlock;
+    if (page.height !== null && from > page.height) return true;
+  }
+  return true;
+}
+
+/**
+ * Members' history from before they joined, read once each through HyperSync: what reached their
+ * address (a payment that brought them, say) while the reconciliation was already past those blocks.
+ * From the factory's deployment (`since`) up to where the reconciliation is; it goes on from there.
+ */
+export async function readMemberHistories(env: Env, config: Config, budget: Budget) {
+  const networks = [...config.networks.values()].filter((network) => network.index.hypersync);
+  if (networks.length === 0) return;
+  const { results } = await env.WALLET_DB.prepare(
+    'SELECT address FROM members WHERE history_read = 0 LIMIT 5',
+  ).all<{ address: Address }>();
+  for (const { address } of results) {
+    for (const network of networks) {
+      const cursor = await cursorOf(env, network);
+      if (cursor === null) continue;
+      let from = network.index.hypersync!.since;
+      while (from <= cursor) {
+        // Out of requests: this member is read again, from the start, on the next run.
+        if (!budget.take()) return;
+        const page = await hypersyncTransfers(network.index.hypersync!, {
+          coins: networkCoins(network).map((coin) => coin.address),
+          addresses: [address],
+          fromBlock: from,
+          toBlock: cursor + 1n,
+        });
+        const stored = await storeTransfers(env, network, page.transfers, budget, page.times);
+        if (!stored) return;
+        if (stored.statements.length > 0) await env.WALLET_DB.batch(stored.statements);
+        if (page.nextBlock <= from) break;
+        from = page.nextBlock;
+      }
+    }
+    await env.WALLET_DB.prepare('UPDATE members SET history_read = 1 WHERE address = ?')
+      .bind(address)
+      .run();
   }
 }
 

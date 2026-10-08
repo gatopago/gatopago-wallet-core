@@ -17,16 +17,38 @@ export function json(body: unknown, status = 200): Response {
   });
 }
 
+/** A JSON object body of at most `limit` bytes; reading stops as soon as it is larger. */
 export async function readJson<T>(request: Request, limit = 32_768): Promise<T> {
   if (!request.headers.get('Content-Type')?.startsWith('application/json'))
     throw new HttpError(415, 'JSON_REQUIRED');
-  const text = await request.text();
-  if (text.length > limit) throw new HttpError(413, 'BODY_TOO_LARGE');
+  const text = await readText(request, limit);
   try {
-    return JSON.parse(text) as T;
+    const value: unknown = JSON.parse(text);
+    if (!value || typeof value !== 'object' || Array.isArray(value))
+      throw new Error('not an object');
+    return value as T;
   } catch {
     throw new HttpError(400, 'INVALID_JSON');
   }
+}
+
+async function readText(request: Request, limit: number): Promise<string> {
+  if (Number(request.headers.get('Content-Length')) > limit)
+    throw new HttpError(413, 'BODY_TOO_LARGE');
+  if (!request.body) return '';
+  const reader = request.body.getReader();
+  const decoder = new TextDecoder();
+  let text = '';
+  let size = 0;
+  for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) {
+    size += chunk.value.byteLength;
+    if (size > limit) {
+      await reader.cancel();
+      throw new HttpError(413, 'BODY_TOO_LARGE');
+    }
+    text += decoder.decode(chunk.value, { stream: true });
+  }
+  return text + decoder.decode();
 }
 
 /** Per-client request budget (Cloudflare Rate Limiting binding). */

@@ -1,3 +1,4 @@
+import { importPKCS8, SignJWT } from 'jose';
 import { formatUnits } from 'viem';
 import type { Config } from './config';
 import { HttpError, json, readJson } from './http';
@@ -31,47 +32,27 @@ export async function deletePushToken(request: Request, env: Env, config: Config
   return json({});
 }
 
-const base64url = (bytes: ArrayBuffer | Uint8Array) =>
-  btoa(String.fromCharCode(...new Uint8Array(bytes)))
-    .replaceAll('+', '-')
-    .replaceAll('/', '_')
-    .replace(/=+$/, '');
-
 let accessToken: { value: string; expiresAt: number } | null = null;
 
 /** OAuth 2.0 access token of the Firebase service account (JWT bearer grant), reused for an hour. */
 async function firebaseAccessToken(account: NonNullable<Config['firebase']>): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
   if (accessToken && accessToken.expiresAt > now + 60) return accessToken.value;
-  const encode = (value: object) => base64url(new TextEncoder().encode(JSON.stringify(value)));
-  const unsigned = `${encode({ alg: 'RS256', typ: 'JWT' })}.${encode({
-    iss: account.clientEmail,
+  const assertion = await new SignJWT({
     scope: 'https://www.googleapis.com/auth/firebase.messaging',
-    aud: 'https://oauth2.googleapis.com/token',
-    iat: now,
-    exp: now + 3600,
-  })}`;
-  const der = Uint8Array.from(atob(account.privateKey.replace(/-----[^-]+-----|\s/g, '')), (char) =>
-    char.charCodeAt(0),
-  );
-  const key = await crypto.subtle.importKey(
-    'pkcs8',
-    der,
-    { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
-    false,
-    ['sign'],
-  );
-  const signature = await crypto.subtle.sign(
-    'RSASSA-PKCS1-v1_5',
-    key,
-    new TextEncoder().encode(unsigned),
-  );
+  })
+    .setProtectedHeader({ alg: 'RS256', typ: 'JWT' })
+    .setIssuer(account.clientEmail)
+    .setAudience('https://oauth2.googleapis.com/token')
+    .setIssuedAt(now)
+    .setExpirationTime(now + 3600)
+    .sign(await importPKCS8(account.privateKey, 'RS256'));
   const response = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
       grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
-      assertion: `${unsigned}.${base64url(signature)}`,
+      assertion,
     }),
   });
   if (!response.ok) throw new Error(`FIREBASE_AUTH_FAILED: ${response.status}`);

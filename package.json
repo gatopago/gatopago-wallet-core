@@ -15,10 +15,12 @@
     "typecheck": "tsc --noEmit && tsc --noEmit --project test/tsconfig.json",
     "lint": "eslint .",
     "test": "vitest run",
-    "build": "wrangler deploy --dry-run --outdir .wrangler/build"
+    "build": "wrangler deploy --dry-run --outdir .wrangler/build",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "dependencies": {
-    "@gatopago/shared": "file:vendor/gatopago-shared-6.10.0.tgz",
+    "@gatopago/shared": "file:vendor/gatopago-shared-6.13.0.tgz",
     "@stellar/stellar-sdk": "17.2.0",
     "jose": "^6.2.10",
     "viem": "2.55.19"
@@ -29,6 +31,7 @@
     "@types/node": "^24.13.3",
     "eslint": "^10.9.0",
     "globals": "^17.11.0",
+    "prettier": "3.9.9",
     "typescript": "~6.0.3",
     "typescript-eslint": "^8.67.0",
     "vitest": "^4.1.11",

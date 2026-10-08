@@ -2,7 +2,7 @@ import { DurableObject } from 'cloudflare:workers';
 import { Address as StellarAddress, scValToNative, xdr, type rpc } from '@stellar/stellar-sdk';
 import { isAddressEqual, isHex, recoverMessageAddress, size, type Address, type Hex } from 'viem';
 import { crosschainStatus } from '@gatopago/shared/crosschain';
-import type { StellarNetwork } from '@gatopago/shared/networks';
+import { XLM_DECIMALS, type StellarNetwork } from '@gatopago/shared/networks';
 import {
   burnMessage,
   deployAccountOperation,
@@ -205,8 +205,8 @@ export async function createStellarAccount(
 }
 
 /**
- * The calls GatoPago pays for: the account moving its USDC, letting Circle burn it, burning it
- * toward another network, and changing its own signers.
+ * The calls GatoPago pays for: the account moving its USDC or XLM, letting Circle burn its USDC,
+ * burning it toward another network, and changing its own signers.
  */
 function sponsorable(network: StellarNetwork, account: string, func: xdr.HostFunction) {
   if (func.type !== 'hostFunctionTypeInvokeContract') return false;
@@ -220,6 +220,7 @@ function sponsorable(network: StellarNetwork, account: string, func: xdr.HostFun
       (method === 'transfer' ||
         (method === 'approve' && second === network.cctp.tokenMessengerMinter))
     );
+  if (target === network.xlm) return first === account && method === 'transfer';
   if (target === network.cctp.tokenMessengerMinter)
     return method === 'deposit_for_burn_with_hook' && first === account;
   return target === account && (method === 'add_signer' || method === 'remove_signer');
@@ -437,7 +438,7 @@ async function relayBurns(env: Env, config: Config, stellar: Stellar, budget: Bu
   }
 }
 
-/** A Stellar USDC transfer event, in CCTP's 6 decimals. */
+/** A Stellar transfer event: USDC in CCTP's 6 decimals, or XLM in its own 7. */
 interface StellarTransfer {
   transactionHash: string;
   logIndex: number;
@@ -446,13 +447,19 @@ interface StellarTransfer {
   from: string;
   to: string;
   value: bigint;
+  coin: { symbol: 'USDC' | 'XLM'; decimals: number };
 }
 
-function transferOf(event: rpc.Api.EventResponse): StellarTransfer | null {
+const USDC = { symbol: 'USDC', decimals: 6 } as const;
+const XLM = { symbol: 'XLM', decimals: XLM_DECIMALS } as const;
+
+function transferOf(network: StellarNetwork, event: rpc.Api.EventResponse): StellarTransfer | null {
   const [, from, to] = event.topic.map((topic) => scValToNative(topic) as unknown);
   // CAP-67: the amount, or `{ amount, to_muxed_id }` toward a muxed address.
   const data = scValToNative(event.value) as bigint | { amount: bigint };
-  const value = fromStellarUnits(typeof data === 'bigint' ? data : data.amount);
+  const amount = typeof data === 'bigint' ? data : data.amount;
+  const coin = event.contractId?.contractId() === network.xlm ? XLM : USDC;
+  const value = coin === USDC ? fromStellarUnits(amount) : amount;
   if (typeof from !== 'string' || typeof to !== 'string' || value === 0n) return null;
   return {
     transactionHash: event.txHash,
@@ -463,11 +470,12 @@ function transferOf(event: rpc.Api.EventResponse): StellarTransfer | null {
     from,
     to,
     value,
+    coin,
   };
 }
 
 /**
- * Reads USDC transfer events since the last ledger read and keeps those of members (the RPC
+ * Reads USDC and XLM transfer events since the last ledger read and keeps those of members (the RPC
  * cannot filter by many addresses), notifying what they received.
  */
 async function indexTransfers(env: Env, config: Config, stellar: Stellar, budget: Budget) {
@@ -481,7 +489,7 @@ async function indexTransfers(env: Env, config: Config, stellar: Stellar, budget
   const filters = [
     {
       type: 'contract' as const,
-      contractIds: [network.usdc],
+      contractIds: [network.usdc, network.xlm],
       topics: [[xdr.ScVal.scvSymbol('transfer').toXdr('base64'), '*', '*', '*']],
     },
   ];
@@ -503,7 +511,9 @@ async function indexTransfers(env: Env, config: Config, stellar: Stellar, budget
       events.push(...page.events.filter((event) => event.ledger <= to));
       if (page.events.some((event) => event.ledger > to)) break;
     }
-    const transfers = events.map(transferOf).filter((transfer) => transfer !== null);
+    const transfers = events
+      .map((event) => transferOf(network, event))
+      .filter((transfer) => transfer !== null);
     const members = await stellarMembers(
       env,
       stellar,
@@ -515,7 +525,8 @@ async function indexTransfers(env: Env, config: Config, stellar: Stellar, budget
       ...kept.map((transfer) =>
         env.WALLET_DB.prepare(
           `INSERT OR IGNORE INTO transfers (network, transaction_hash, log_index, block_number,
-             timestamp, from_address, to_address, amount, kind) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             timestamp, from_address, to_address, amount, kind, token)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).bind(
           stellar.id,
           transfer.transactionHash,
@@ -528,6 +539,7 @@ async function indexTransfers(env: Env, config: Config, stellar: Stellar, budget
           crosschain.includes(transfer.from) || crosschain.includes(transfer.to)
             ? 'crosschain'
             : 'transfer',
+          transfer.coin.symbol,
         ),
       ),
       env.WALLET_DB.prepare(

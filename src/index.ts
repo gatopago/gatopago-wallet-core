@@ -1,5 +1,5 @@
 import { getAddress, isAddress } from 'viem';
-import { readActivity, reconcileTransfers } from './activity';
+import { readActivity, readMemberHistories, reconcileTransfers } from './activity';
 import { receiveAlchemyWebhook, watchMembers } from './alchemy';
 import { deletePushToken, savePushToken } from './push';
 import { addApproval, readApprovals } from './approvals';
@@ -18,6 +18,7 @@ import { config, type Config } from './config';
 import { HttpError, json, withCors } from './http';
 import { sponsor } from './paymaster';
 import { readProfile, readRecipient, updateProfile } from './profile';
+import { addVaultKey, readVault, saveVaultRecord } from './vault';
 import {
   addStellarKey,
   createStellarAccount,
@@ -30,7 +31,6 @@ import {
 } from './stellar';
 
 export { Bundler } from './bundler';
-export { WalletIdentity } from './identity';
 export { StellarRelayer } from './stellar';
 
 function route(request: Request, env: Env, settings: Config): Promise<Response> {
@@ -124,6 +124,13 @@ function route(request: Request, env: Env, settings: Config): Promise<Response> 
       if (id === 'relays') return requestStellarRelay(request, env, settings);
       if (id === 'keys') return addStellarKey(request, env, settings);
       break;
+    case 'GET vault':
+      if (!id) return readVault(request, env, settings);
+      break;
+    case 'PUT vault':
+      if (id === 'keys') return addVaultKey(request, env, settings);
+      if (id === 'records') return saveVaultRecord(request, env, settings);
+      break;
   }
   throw new HttpError(404, 'NOT_FOUND');
 }
@@ -175,7 +182,12 @@ export default {
       await watchMembers(env, settings, budget).catch((error: unknown) => console.error(error));
       return syncStellar(env, settings, budget);
     }
-    if (controller.cron === '*/10 * * * *') return reconcileTransfers(env, settings, budget);
+    if (controller.cron === '*/10 * * * *') {
+      await reconcileTransfers(env, settings, budget);
+      return readMemberHistories(env, settings, budget).catch((error: unknown) =>
+        console.error(error),
+      );
+    }
     const now = Math.floor(Date.now() / 1000);
     await env.WALLET_DB.batch([
       env.WALLET_DB.prepare('DELETE FROM siwe_nonces WHERE expires_at <= ?').bind(now),

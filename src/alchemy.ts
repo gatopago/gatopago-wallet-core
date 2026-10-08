@@ -1,5 +1,13 @@
-import { decodeEventLog, hexToBytes, isHex, type Address, type Hex } from 'viem';
-import { coinOf, storeTransfers, transferEvent, type Transfer } from './activity';
+import {
+  decodeEventLog,
+  getAddress,
+  hexToBytes,
+  isAddress,
+  isHex,
+  type Address,
+  type Hex,
+} from 'viem';
+import { coinOf, NATIVE_LOG_INDEX, storeTransfers, transferEvent, type Transfer } from './activity';
 import type { Budget } from './budget';
 import type { Config } from './config';
 import { HttpError, json } from './http';
@@ -10,6 +18,13 @@ interface ActivityEvent {
   type?: string;
   event?: {
     activity?: {
+      /** `external`: a transaction's own value in the native coin (no log); `token`: a log. */
+      category?: string;
+      fromAddress?: string;
+      toAddress?: string;
+      hash?: string;
+      blockNum?: string;
+      rawContract?: { rawValue?: string; address?: string | null };
       log?: {
         address: Address;
         topics: [Hex, ...Hex[]];
@@ -20,6 +35,35 @@ interface ActivityEvent {
         removed: boolean;
       };
     }[];
+  };
+}
+
+type Activity = NonNullable<NonNullable<ActivityEvent['event']>['activity']>[number];
+
+/** A transaction sending the native coin straight to an address (Alchemy's `external`), or null. */
+function nativeTransfer(activity: Activity): Transfer | null {
+  const { category, fromAddress, toAddress, hash, blockNum, rawContract } = activity;
+  if (
+    category !== 'external' ||
+    rawContract?.address ||
+    !fromAddress ||
+    !toAddress ||
+    !isAddress(fromAddress) ||
+    !isAddress(toAddress) ||
+    !isHex(hash) ||
+    !isHex(blockNum) ||
+    !isHex(rawContract?.rawValue) ||
+    BigInt(rawContract.rawValue) === 0n
+  )
+    return null;
+  return {
+    transactionHash: hash,
+    logIndex: NATIVE_LOG_INDEX,
+    blockNumber: BigInt(blockNum),
+    token: null,
+    from: getAddress(fromAddress),
+    to: getAddress(toAddress),
+    value: BigInt(rawContract.rawValue),
   };
 }
 
@@ -42,7 +86,8 @@ async function signedBy(signingKey: string, body: string, signature: string | nu
 
 /**
  * `POST /app/v1/webhooks/alchemy`: an Address Activity event, signed with its webhook's key. Keeps
- * the USDC transfers involving members and forgets those a reorg removed.
+ * the members' transfers of the configured coins and of the native coin sent straight to them, and
+ * forgets those a reorg removed.
  */
 export async function receiveAlchemyWebhook(
   request: Request,
@@ -69,8 +114,14 @@ export async function receiveAlchemyWebhook(
 
   const added: Transfer[] = [];
   const removed: D1PreparedStatement[] = [];
-  for (const { log } of payload.event?.activity ?? []) {
-    if (!log || !coinOf(network, log.address)) continue;
+  for (const activity of payload.event?.activity ?? []) {
+    const { log } = activity;
+    if (!log) {
+      const native = nativeTransfer(activity);
+      if (native) added.push(native);
+      continue;
+    }
+    if (!coinOf(network, log.address)) continue;
     let args;
     try {
       ({ args } = decodeEventLog({ abi: [transferEvent], topics: log.topics, data: log.data }));

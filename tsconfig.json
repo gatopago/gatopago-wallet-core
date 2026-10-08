@@ -7,17 +7,9 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "skipLibCheck": true,
-    "lib": [
-      "ESNext",
-      "DOM"
-    ],
+    "lib": ["ESNext", "DOM"],
     "resolveJsonModule": true,
     "allowImportingTsExtensions": true
   },
-  "include": [
-    "src",
-    "vitest.config.ts",
-    "test/fork.ts",
-    "worker-configuration.d.ts"
-  ]
+  "include": ["src", "vitest.config.ts", "test/fork.ts", "worker-configuration.d.ts"]
 }

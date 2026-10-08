@@ -1,6 +1,6 @@
-import { createExecutionContext, createScheduledController } from 'cloudflare:test';
+import { createScheduledController } from 'cloudflare:test';
 import { env, exports } from 'cloudflare:workers';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   bytesToHex,
   createPublicClient,
@@ -9,6 +9,7 @@ import {
   erc20Abi,
   hexToBytes,
   http,
+  pad,
   parseEther,
   sha256,
   toHex,
@@ -44,9 +45,11 @@ import {
   toGatoPagoAccount,
   type GatoPagoAccount,
 } from '@gatopago/shared/wallet';
-import worker, { WalletIdentity } from '../src/index';
-import { coinOf } from '../src/activity';
-import type { Network } from '../src/config';
+import worker from '../src/index';
+import { authenticate } from '../src/session';
+import { coinOf, readMemberHistories, reconcileTransfers } from '../src/activity';
+import { Budget } from '../src/budget';
+import { config, type Network } from '../src/config';
 
 const API = 'https://api.gatopago.com/app/v1';
 /** The real fetch, for mocks that only answer some services. */
@@ -200,6 +203,29 @@ describe('routing', () => {
     });
     expect(foreign.headers.get('Access-Control-Allow-Origin')).toBeNull();
   });
+
+  it('stops reading a body as soon as it is too large, and wants a JSON object', async () => {
+    let pulled = 0;
+    const endless = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulled += 16_384;
+        controller.enqueue(new Uint8Array(16_384).fill(32));
+      },
+    });
+    const large = await exports.default.fetch(
+      new Request(`${API}/auth/session`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: endless,
+        duplex: 'half',
+      } as RequestInit),
+    );
+    expect(large.status).toBe(413);
+    expect(pulled).toBeLessThan(128 * 1024);
+    const empty = await api('auth/session', { body: null });
+    expect(empty.status).toBe(400);
+    expect(await empty.json()).toEqual({ error_code: 'INVALID_JSON' });
+  });
 });
 
 describe('sign-in with Ethereum', () => {
@@ -274,35 +300,14 @@ describe('sign-in with Ethereum', () => {
       error_code: 'SIGNATURE_INVALID',
     });
   });
-
-  it('identifies the session for Flow through WalletIdentity', async () => {
-    const token = await member(await newAccount());
-    const identity = new WalletIdentity(createExecutionContext(), env);
-    const ask = (authorization: string, environment = 'production') =>
-      identity.fetch(
-        new Request('https://wallet-identity.internal/session', {
-          method: 'POST',
-          headers: { Authorization: authorization, 'X-GatoPago-Environment': environment },
-        }),
-      );
-    const answer = await (
-      await ask(`Bearer ${token}`)
-    ).json<{ user_id: string; expires_at: number }>();
-    expect(answer.user_id).toMatch(/^usr_/);
-    expect(answer.expires_at).toBeLessThanOrEqual(Math.floor(Date.now() / 1000) + 30);
-    expect((await ask('Bearer not.a.token')).status).toBe(401);
-    expect((await ask(`Bearer ${token}`, 'staging')).status).toBe(503);
-  });
 });
 
 describe('GatoPago Business sign-in', () => {
+  /** Verifies a session as Flow does (signature, issuer, expiry), business scope allowed. */
   const identity = (token: string) =>
-    new WalletIdentity(createExecutionContext(), env).fetch(
-      new Request('https://wallet-identity.internal/session', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'X-GatoPago-Environment': 'production' },
-      }),
-    );
+    authenticate(new Request(API, { headers: { Authorization: `Bearer ${token}` } }), config(env), {
+      business: true,
+    });
 
   it('signs the console in once the member approves its QR with their passkey', async () => {
     const account = await newAccount();
@@ -347,7 +352,9 @@ describe('GatoPago Business sign-in', () => {
     expect(session.status).toBe('approved');
     expect(await (await collect()).json()).toEqual({ status: 'expired' });
     // A Business session works for Flow, never for the wallet.
-    expect((await identity(session.token)).status).toBe(200);
+    await expect(identity(session.token)).resolves.toMatchObject({
+      userId: expect.stringMatching(/^usr_/),
+    });
     expect((await api('profile', { token: session.token })).status).toBe(401);
   });
 
@@ -377,7 +384,9 @@ describe('GatoPago Business sign-in', () => {
     const account = await newAccount();
     await member(account);
     const { token } = await (await siweBusiness(account)).json<{ token: string }>();
-    expect((await identity(token)).status).toBe(200);
+    await expect(identity(token)).resolves.toMatchObject({
+      userId: expect.stringMatching(/^usr_/),
+    });
     expect((await api('profile', { token })).status).toBe(401);
     const preflight = await api('business-login', {
       method: 'OPTIONS',
@@ -461,6 +470,82 @@ describe('profile', () => {
     expect(await (await api('card-interest', { token })).json()).toMatchObject({
       interest: { ...answers, country: 'Bolivia', use_case: 'daily' },
     });
+  });
+});
+
+describe('private vault', () => {
+  const wrapped = (credentialId: string) => ({
+    version: 1,
+    credential: { credentialId },
+    prfSalt: 'c2FsdA',
+    nonce: 'bm9uY2U',
+    ciphertext: 'Y2lwaGVydGV4dA',
+  });
+  const record = (version: number, ciphertext = 'b3BhcXVl') => ({
+    space: 'team',
+    nonce: 'AAAAAAAAAAAAAAAA',
+    ciphertext,
+    version,
+  });
+
+  it('keeps only ciphertext, adds each passkey once, and never overwrites an unseen write', async () => {
+    const token = await member(await newAccount());
+    const vault = async (as = token) => (await api('vault', { token: as })).json();
+    expect(await vault()).toEqual({ keys: [], records: [] });
+
+    const key = { credential_id: 'cGhvbmU', vault: wrapped('cGhvbmU') };
+    expect(
+      (await api('vault/keys', { method: 'PUT', token, body: { ...key, create: true } })).status,
+    ).toBe(201);
+    // Started once: another device starting it at the same time gets a conflict, not a second key.
+    expect(
+      await (
+        await api('vault/keys', {
+          method: 'PUT',
+          token,
+          body: { credential_id: 'bGFwdG9w', vault: wrapped('bGFwdG9w'), create: true },
+        })
+      ).json(),
+    ).toEqual({ error_code: 'VAULT_EXISTS' });
+    // A key is never replaced, and a vault must name the passkey it is stored under.
+    expect(await (await api('vault/keys', { method: 'PUT', token, body: key })).json()).toEqual({
+      error_code: 'VAULT_KEY_EXISTS',
+    });
+    expect(
+      (
+        await api('vault/keys', {
+          method: 'PUT',
+          token,
+          body: { credential_id: 'b3RoZXI', vault: wrapped('cGhvbmU') },
+        })
+      ).status,
+    ).toBe(400);
+
+    expect(
+      await (await api('vault/records', { method: 'PUT', token, body: record(0) })).json(),
+    ).toEqual({ version: 1 });
+    // Another device saves version 2; this one, still on version 1 after that, must read first.
+    expect(
+      (await api('vault/records', { method: 'PUT', token, body: record(1, 'bmV3ZXI') })).status,
+    ).toBe(200);
+    expect(
+      await (await api('vault/records', { method: 'PUT', token, body: record(1) })).json(),
+    ).toEqual({ error_code: 'VAULT_CHANGED' });
+    expect((await api('vault/records', { method: 'PUT', token, body: record(0) })).status).toBe(
+      409,
+    );
+    expect(
+      (await api('vault/records', { method: 'PUT', token, body: { ...record(2), space: 'Team!' } }))
+        .status,
+    ).toBe(400);
+
+    expect(await vault()).toEqual({
+      keys: [key],
+      records: [{ space: 'team', nonce: 'AAAAAAAAAAAAAAAA', ciphertext: 'bmV3ZXI', version: 2 }],
+    });
+    // Each member sees only their own vault.
+    expect(await vault(await member(await newAccount()))).toEqual({ keys: [], records: [] });
+    expect((await api('vault')).status).toBe(401);
   });
 });
 
@@ -629,28 +714,31 @@ describe('activity', () => {
   }
 
   /** Delivers `logs` as Alchemy would: an Address Activity event signed with the webhook's key. */
-  async function deliver(logs: Log[], removed = false, signingKey = 'test-signing-key') {
+  const deliver = (logs: Log[], removed = false, signingKey = 'test-signing-key') =>
+    post(
+      logs.map((log) => ({
+        category: 'token',
+        log: {
+          address: log.address,
+          topics: log.topics,
+          data: log.data,
+          blockHash: log.blockHash,
+          blockNumber: toHex(log.blockNumber!),
+          transactionHash: log.transactionHash,
+          transactionIndex: toHex(log.transactionIndex!),
+          logIndex: toHex(log.logIndex!),
+          removed,
+        },
+      })),
+      signingKey,
+    );
+
+  async function post(activity: unknown[], signingKey = 'test-signing-key') {
     const body = JSON.stringify({
       webhookId: 'wh_test',
       id: 'whevt_test',
       type: 'ADDRESS_ACTIVITY',
-      event: {
-        network: 'ARB_SEPOLIA',
-        activity: logs.map((log) => ({
-          category: 'token',
-          log: {
-            address: log.address,
-            topics: log.topics,
-            data: log.data,
-            blockHash: log.blockHash,
-            blockNumber: toHex(log.blockNumber!),
-            transactionHash: log.transactionHash,
-            transactionIndex: toHex(log.transactionIndex!),
-            logIndex: toHex(log.logIndex!),
-            removed,
-          },
-        })),
-      },
+      event: { network: 'ARB_SEPOLIA', activity },
     });
     const key = await crypto.subtle.importKey(
       'raw',
@@ -682,6 +770,174 @@ describe('activity', () => {
       decimals: 6,
     });
     expect(coinOf(monad, '0x0000000000000000000000000000000000000bad')).toBeNull();
+  });
+
+  /** Answers Firebase as it would and keeps the notifications sent; anything else goes through. */
+  function notifications(answer?: (request: Request) => Promise<Response | null>) {
+    const sent: { message: { data: Record<string, string> } }[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const request = new Request(input, init);
+      if (request.url === 'https://oauth2.googleapis.com/token')
+        return Response.json({ access_token: 'google-token', expires_in: 3600 });
+      if (request.url === 'https://fcm.googleapis.com/v1/projects/gatopago-test/messages:send') {
+        sent.push(await request.json());
+        return new Response(null, { status: 200 });
+      }
+      return (await answer?.(request)) ?? realFetch(input, init);
+    });
+    return sent;
+  }
+
+  it('keeps the native coin sent straight to a member, and notifies it', async () => {
+    const alice = await newAccount();
+    const token = await member(alice);
+    await api('push-tokens', {
+      token,
+      body: { token: `fcm-alice-${'x'.repeat(40)}`, language: 'es' },
+    });
+    const sent = notifications();
+    const external = {
+      category: 'external',
+      fromAddress: privateKeyToAccount(generatePrivateKey()).address,
+      toAddress: alice.address.toLowerCase(),
+      hash: `0x${'cd'.repeat(32)}`,
+      blockNum: toHex(await client.getBlockNumber()),
+      asset: 'ETH',
+      rawContract: { rawValue: toHex(10n ** 17n), address: null, decimals: 18 },
+    };
+    const empty = { ...external, hash: `0x${'ce'.repeat(32)}`, rawContract: { rawValue: '0x0' } };
+    expect((await post([external, empty])).status).toBe(200);
+    expect(
+      (await (await api('activity', { token })).json<{ activity: object[] }>()).activity,
+    ).toMatchObject([
+      { direction: 'received', currency: 'ETH', amount: '100000000000000000', kind: 'transfer' },
+    ]);
+    expect(sent.map(({ message }) => message.data.title)).toEqual(['Recibiste 0,10 ETH']);
+  });
+
+  it("reads members' transfers and their earlier history through Envio HyperSync", async () => {
+    const [alice, bob, carol] = [await newAccount(), await newAccount(), await newAccount()];
+    const [aliceToken, bobToken] = [await member(alice), await member(bob)];
+    const settings = config({
+      ...env,
+      INDEX_SOURCES: JSON.stringify({
+        'eip155:421614': { hypersync: 'https://421614.hypersync.xyz', since: 1000 },
+      }),
+      ENVIO_API_TOKEN: 'envio-test-token',
+    });
+    const cursor = () =>
+      env.WALLET_DB.prepare(
+        "SELECT block FROM index_cursors WHERE network = 'eip155:421614'",
+      ).first<number>('block');
+    const before = await cursor();
+    await env.WALLET_DB.prepare(
+      `INSERT INTO index_cursors (network, block) VALUES ('eip155:421614', 2000)
+       ON CONFLICT (network) DO UPDATE SET block = excluded.block`,
+    ).run();
+    await api('push-tokens', {
+      token: bobToken,
+      body: { token: `fcm-bob-${'y'.repeat(40)}`, language: 'es' },
+    });
+    const now = Math.floor(Date.now() / 1000);
+    // Only these two are read for their earlier history.
+    await env.WALLET_DB.prepare('UPDATE members SET history_read = 1 WHERE address NOT IN (?, ?)')
+      .bind(alice.address.toLowerCase(), bob.address.toLowerCase())
+      .run();
+
+    const log = (from: Hex, to: Hex, value: bigint, block: number, hash: string) => ({
+      block_number: block,
+      log_index: '0x1',
+      transaction_hash: `0x${hash.repeat(64)}`,
+      address: usdc,
+      topic1: pad(from.toLowerCase() as Hex),
+      topic2: pad(to.toLowerCase() as Hex),
+      data: toHex(value, { size: 32 }),
+    });
+    const native = (status: number, value: bigint, hash: string) => ({
+      block_number: '0x7d5',
+      hash: `0x${hash.repeat(64)}`,
+      from: carol.address,
+      to: alice.address.toLowerCase(),
+      value: toHex(value),
+      status,
+    });
+    const queries: { authorization: string | null; body: Record<string, unknown> }[] = [];
+    let blockReads = 0;
+    const sent = notifications(async (request) => {
+      if (request.url === 'https://421614.hypersync.xyz/query') {
+        const body = await request.json<{ to_block?: number; logs: { topics: Hex[][] }[] }>();
+        queries.push({ authorization: request.headers.get('Authorization'), body });
+        // The reconciliation, from the cursor on: block numbers as hex, as integers below.
+        if (body.to_block === undefined)
+          return Response.json({
+            data: [
+              {
+                blocks: [{ number: '0x7d5', timestamp: toHex(now) }],
+                logs: [log(alice.address, bob.address, 2_000_000n, 2005, 'a')],
+                // Native coin sent to Alice: kept only if it landed and moved value.
+                transactions: [
+                  native(1, 10n ** 17n, 'c'),
+                  native(0, 10n ** 17n, 'd'),
+                  native(1, 0n, 'e'),
+                ],
+              },
+            ],
+            next_block: 2006,
+            archive_height: 2005,
+          });
+        // A member's earlier history, up to the cursor: Carol paid Bob before he joined.
+        const forBob = body.logs[0].topics[1].includes(pad(bob.address.toLowerCase() as Hex));
+        return Response.json({
+          data: {
+            blocks: [{ number: 1500, timestamp: 1_700_000_000 }],
+            logs: forBob ? [log(carol.address, bob.address, 7_000_000n, 1500, 'b')] : [],
+          },
+          next_block: body.to_block,
+          archive_height: 2005,
+        });
+      }
+      if (
+        request.url.startsWith(FORK_RPC) &&
+        (await request.clone().text()).includes('eth_getBlockBy')
+      )
+        blockReads++;
+      return null;
+    });
+
+    await reconcileTransfers(env, settings, new Budget(45));
+    expect(await cursor()).toBe(2005);
+    await readMemberHistories(env, settings, new Budget(45));
+
+    expect(queries[0].authorization).toBe('Bearer envio-test-token');
+    expect(JSON.stringify(queries[0].body.logs)).toContain(pad(alice.address.toLowerCase() as Hex));
+    // Block times come with the logs: no request per block.
+    expect(blockReads).toBe(0);
+    const activity = async (token: string) =>
+      (await (await api('activity', { token })).json<{ activity: Record<string, unknown>[] }>())
+        .activity;
+    expect(await activity(bobToken)).toMatchObject([
+      { direction: 'received', amount: '2000000', timestamp: now },
+      { direction: 'received', amount: '7000000', timestamp: 1_700_000_000 },
+    ]);
+    expect(await activity(aliceToken)).toMatchObject([
+      { direction: 'sent', currency: 'USDC', amount: '2000000' },
+      { direction: 'received', currency: 'ETH', amount: '100000000000000000' },
+    ]);
+    // What a webhook missed and is recent is notified; the earlier history is not.
+    expect(sent.map(({ message }) => message.data.title)).toEqual(['Recibiste 2,00 USDC']);
+    // Read once: the next run does not ask again.
+    const asked = queries.length;
+    await readMemberHistories(env, settings, new Budget(45));
+    expect(queries).toHaveLength(asked);
+
+    // The other tests reconcile the fork from where they left it.
+    await (
+      before === null
+        ? env.WALLET_DB.prepare("DELETE FROM index_cursors WHERE network = 'eip155:421614'")
+        : env.WALLET_DB.prepare(
+            "UPDATE index_cursors SET block = ? WHERE network = 'eip155:421614'",
+          ).bind(before)
+    ).run();
   });
 
   it("indexes members' USDC transfers and lists them newest first", async () => {
@@ -837,6 +1093,14 @@ describe('stellar', () => {
   const testnet = stellarNetworks['stellar:testnet'];
   const server = new rpc.Server(testnet.rpcUrl);
   const sponsor = Keypair.fromSecret(env.STELLAR_SECRET_KEY).publicKey();
+  // Integration with Stellar's public testnet: only these tests need Friendbot and the network.
+  beforeAll(async () => {
+    const funded = await fetch(`https://friendbot.stellar.org?addr=${sponsor}`, {
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!funded.ok)
+      throw new Error(`Friendbot could not fund the Stellar sponsor: ${funded.status}`);
+  });
   const minute = () => worker.scheduled(createScheduledController({ cron: '* * * * *' }), env);
   const hostFunction = (operation: xdr.Operation) => {
     if (operation.body.type !== 'invokeHostFunction') throw new Error('not a contract call');
@@ -1014,7 +1278,7 @@ describe('stellar', () => {
     expect(await status(token)).toEqual({ status: 'rejected', transaction_hash: null });
   });
 
-  it('lists Stellar transfers with the activity and notifies the receiver', async () => {
+  it('lists Stellar transfers of USDC and XLM with the activity and notifies the receiver', async () => {
     const [alice, bob] = [await newAccount(), await newAccount()];
     const [aliceToken, bobToken] = [await member(alice), await member(bob)];
     const stellarOf = async (token: string) =>
@@ -1027,11 +1291,16 @@ describe('stellar', () => {
 
     const hash = 'ef'.repeat(32);
     const stranger = Keypair.random().publicKey();
-    const transfer = (between: [string, string], id: number, ledger: number) => ({
+    const transfer = (
+      between: [string, string],
+      id: number,
+      ledger: number,
+      coin: 'USDC' | 'XLM' = 'USDC',
+    ) => ({
       type: 'contract',
       ledger,
       ledgerClosedAt: '2026-10-06T12:00:00Z',
-      contractId: testnet.usdc,
+      contractId: coin === 'XLM' ? testnet.xlm : testnet.usdc,
       id: `0021678426519777280-000000000${id}`,
       operationIndex: 0,
       transactionIndex: 0,
@@ -1041,9 +1310,15 @@ describe('stellar', () => {
         xdr.ScVal.scvSymbol('transfer'),
         new StellarAddress(between[0]).toScVal(),
         new StellarAddress(between[1]).toScVal(),
-        xdr.ScVal.scvString('USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5'),
+        xdr.ScVal.scvString(
+          coin === 'XLM'
+            ? 'native'
+            : 'USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5',
+        ),
       ].map((topic) => topic.toXdr('base64')),
-      value: nativeToScVal(25_000_005n, { type: 'i128' }).toXdr('base64'),
+      value: nativeToScVal(coin === 'XLM' ? 15_000_000n : 25_000_005n, { type: 'i128' }).toXdr(
+        'base64',
+      ),
     });
     const sent: { message: { data: Record<string, string> } }[] = [];
     let delivered = false;
@@ -1065,6 +1340,7 @@ describe('stellar', () => {
             : [
                 transfer([from, to], 0, startLedger),
                 transfer([stranger, stranger], 1, startLedger),
+                transfer([from, to], 2, startLedger, 'XLM'),
               ];
           delivered = true;
           return Response.json({
@@ -1090,7 +1366,7 @@ describe('stellar', () => {
     await minute();
     await minute();
 
-    // 2.5000005 USDC: the seventh decimal does not cross networks.
+    // 2.5000005 USDC: the seventh decimal does not cross networks. XLM keeps its 7 decimals.
     const { activity } = await (
       await api('activity', { token: bobToken })
     ).json<{
@@ -1099,9 +1375,17 @@ describe('stellar', () => {
     expect(activity).toEqual([
       expect.objectContaining({
         network: 'stellar:testnet',
+        direction: 'received',
+        currency: 'XLM',
+        amount: '15000000',
+        counterparty: from,
+      }),
+      expect.objectContaining({
+        network: 'stellar:testnet',
         transaction_hash: hash,
         direction: 'received',
         kind: 'transfer',
+        currency: 'USDC',
         amount: '2500000',
         counterparty: from,
       }),
@@ -1111,8 +1395,10 @@ describe('stellar', () => {
     ).json<{
       activity: { direction: string }[];
     }>();
-    expect(sentByAlice.map((row) => row.direction)).toEqual(['sent']);
-    expect(sent).toHaveLength(1);
-    expect(sent[0].message.data.title).toBe('Recibiste 2,50 USDC');
+    expect(sentByAlice.map((row) => row.direction)).toEqual(['sent', 'sent']);
+    expect(sent.map(({ message }) => message.data.title)).toEqual([
+      'Recibiste 2,50 USDC',
+      'Recibiste 1,50 XLM',
+    ]);
   });
 });
