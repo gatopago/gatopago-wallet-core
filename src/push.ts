@@ -142,8 +142,8 @@ export async function deliver(
           : en
             ? `From ${from}`
             : `De ${from}`,
-        // The app opens in the device's language: English is `?lang=en`, as everywhere in it.
-        link: en ? '/statement?lang=en' : '/statement',
+        // The app opens in the device's language: English pages live under `/en`.
+        link: en ? '/en/statement' : '/statement',
       },
       webpush: { headers: { Urgency: 'high' } },
     };
