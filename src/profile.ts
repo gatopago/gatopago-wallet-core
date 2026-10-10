@@ -34,11 +34,31 @@ const profile = (member: Member) => ({
   social_url: member.socialUrl,
 });
 
-export async function signedInMember(request: Request, env: Env, config: Config): Promise<Member> {
-  const session = await authenticate(request, config);
+/**
+ * The member of the wallet session in the request. A session issued before an owner of the account
+ * was removed (an earlier generation) no longer counts: it may be that owner's.
+ */
+export async function signedInMember(
+  request: Request,
+  env: Env,
+  config: Config,
+  { business = false }: { business?: boolean } = {},
+): Promise<Member> {
+  const session = await authenticate(request, config, { business });
   const member = await memberByAddress(env.WALLET_DB, session.address);
-  if (!member) throw new HttpError(401, 'UNAUTHENTICATED');
+  if (!member || session.generation !== member.sessionGeneration)
+    throw new HttpError(401, 'UNAUTHENTICATED');
   return member;
+}
+
+/**
+ * `GET /app/v1/auth/session`: whether a session (the wallet's or Business's) still counts, and
+ * whose it is. Flow asks it for every session it receives, so a session Wallet Core ended is ended
+ * there too.
+ */
+export async function readSession(request: Request, env: Env, config: Config): Promise<Response> {
+  const member = await signedInMember(request, env, config, { business: true });
+  return json({ user_id: member.id, address: member.address });
 }
 
 /** `GET /app/v1/profile` */

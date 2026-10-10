@@ -13,6 +13,10 @@ const TRANSFER = toEventSelector('Transfer(address,address,uint256)');
 export const NATIVE_LOG_INDEX = -1;
 /** Addresses per topic filter of one query. */
 const ADDRESSES_PER_FILTER = 500;
+/** A query that takes longer is abandoned: its blocks wait for the next run. */
+const TIMEOUT_MS = 20_000;
+/** Most logs one answer may carry; HyperSync stops there and `next_block` says where to go on. */
+const MAX_LOGS = 5_000;
 
 /** Block numbers and other quantities: integers or hex strings, both accepted. */
 type Quantity = number | string;
@@ -23,8 +27,10 @@ interface Batch {
     log_index: Quantity;
     transaction_hash: Hex;
     address: Address;
+    topic0?: Hex | null;
     topic1: Hex;
     topic2: Hex;
+    topic3?: Hex | null;
     data: Hex;
   }[];
   transactions?: {
@@ -37,7 +43,7 @@ interface Batch {
   }[];
 }
 
-export interface HypersyncSource {
+interface HypersyncSource {
   readonly url: string;
   readonly token: string;
 }
@@ -70,8 +76,10 @@ export async function hypersyncTransfers(
   const response = await fetch(`${source.url}/query`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${source.token}` },
+    signal: AbortSignal.timeout(TIMEOUT_MS),
     body: JSON.stringify({
       from_block: Number(query.fromBlock),
+      max_num_logs: MAX_LOGS,
       ...(query.toBlock === undefined ? {} : { to_block: Number(query.toBlock) }),
       logs: filters,
       transactions: recipients,
@@ -148,7 +156,56 @@ export async function hypersyncTransfers(
 export async function hypersyncHeight(source: HypersyncSource): Promise<bigint> {
   const response = await fetch(`${source.url}/height`, {
     headers: { Authorization: `Bearer ${source.token}` },
+    signal: AbortSignal.timeout(TIMEOUT_MS),
   });
   if (!response.ok) throw new Error(`HYPERSYNC_FAILED: ${response.status}`);
   return BigInt((await response.json<{ height: Quantity }>()).height);
+}
+
+/**
+ * The logs of one event (`topic0`) emitted by `address` from `fromBlock` on, as far as HyperSync
+ * answers in one query: their transaction, topics and data, `nextBlock` to go on from, and its
+ * latest block.
+ */
+export async function hypersyncLogs(
+  source: HypersyncSource,
+  query: { address: Address; topic0: Hex; fromBlock: bigint },
+): Promise<{
+  logs: { transactionHash: Hex; topics: [Hex, ...Hex[]]; data: Hex }[];
+  nextBlock: bigint;
+  height: bigint | null;
+}> {
+  const response = await fetch(`${source.url}/query`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${source.token}` },
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+    body: JSON.stringify({
+      from_block: Number(query.fromBlock),
+      max_num_logs: MAX_LOGS,
+      logs: [{ address: [query.address], topics: [[query.topic0]] }],
+      field_selection: {
+        log: ['transaction_hash', 'topic0', 'topic1', 'topic2', 'topic3', 'data'],
+      },
+    }),
+  });
+  if (!response.ok) throw new Error(`HYPERSYNC_FAILED: ${response.status}`);
+  const result = await response.json<{
+    data: Batch | Batch[];
+    next_block: Quantity;
+    archive_height?: Quantity | null;
+  }>();
+  const batches = Array.isArray(result.data) ? result.data : [result.data];
+  return {
+    logs: batches
+      .flatMap((batch) => batch.logs ?? [])
+      .map((log) => ({
+        transactionHash: log.transaction_hash,
+        topics: [log.topic0, log.topic1, log.topic2, log.topic3].filter(
+          (topic) => topic != null,
+        ) as [Hex, ...Hex[]],
+        data: log.data,
+      })),
+    nextBlock: BigInt(result.next_block),
+    height: result.archive_height == null ? null : BigInt(result.archive_height),
+  };
 }

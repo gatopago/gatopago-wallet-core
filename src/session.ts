@@ -3,9 +3,11 @@ import { getAddress, type Address } from 'viem';
 import type { Config } from './config';
 import { HttpError } from './http';
 
-export interface Session {
+interface Session {
   readonly userId: string;
   readonly address: Address;
+  /** The member's session generation it was issued in (`Member.sessionGeneration`). */
+  readonly generation: number;
   readonly expiresAt: number;
 }
 
@@ -18,13 +20,16 @@ const LIFETIME_SECONDS = { wallet: 24 * 3600, business: 12 * 3600 };
  */
 export async function issueSession(
   config: Config,
-  member: { id: string; address: string },
+  member: { id: string; address: string; sessionGeneration?: number },
   scope: 'wallet' | 'business' = 'wallet',
 ) {
   const expiresAt = Math.floor(Date.now() / 1000) + LIFETIME_SECONDS[scope];
-  const token = await new SignJWT(
-    scope === 'business' ? { address: member.address, scope } : { address: member.address },
-  )
+  // Both scopes carry the member's session generation: removing an owner ends them all.
+  const token = await new SignJWT({
+    address: member.address,
+    generation: member.sessionGeneration ?? 0,
+    ...(scope === 'business' && { scope }),
+  })
     .setProtectedHeader({ alg: 'ES256' })
     .setIssuer(ISSUER)
     .setSubject(member.id)
@@ -52,6 +57,7 @@ export async function authenticate(
     return {
       userId: String(payload.sub),
       address: getAddress(String(payload.address)),
+      generation: Number(payload.generation ?? 0),
       expiresAt: Number(payload.exp),
     };
   } catch {

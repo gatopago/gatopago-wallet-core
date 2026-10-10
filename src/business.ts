@@ -1,8 +1,12 @@
-import { bytesToHex, isAddressEqual, sha256, type Hex } from 'viem';
-import { parseSiweMessage, verifySiweMessage } from 'viem/siwe';
+import { bytesToHex, getAddress, isAddressEqual, sha256, type Address, type Hex } from 'viem';
+import { parseSiweMessage } from 'viem/siwe';
+import { messageSigner } from '@gatopago/shared/wallet';
+import { currentOwners } from './approvals';
 import type { Config } from './config';
 import { HttpError, json, rateLimit, readJson } from './http';
-import { authenticate, issueSession } from './session';
+import { issueSession } from './session';
+import { memberByAddress } from './members';
+import { signedInMember } from './profile';
 
 /** How long the console's QR stays valid, and how long after it the console may still collect. */
 const REQUEST_SECONDS = 120;
@@ -78,11 +82,9 @@ export async function collectBusinessLogin(
     .bind(id)
     .first();
   if (!collected) return json({ status: 'expired' });
-  const session = await issueSession(
-    config,
-    { id: login.member_id, address: login.address },
-    'business',
-  );
+  const member = await memberByAddress(env.WALLET_DB, login.address as Address);
+  if (!member) return json({ status: 'expired' });
+  const session = await issueSession(config, member, 'business');
   return json({
     status: 'approved',
     token: session.token,
@@ -107,7 +109,7 @@ export async function readBusinessApproval(
   config: Config,
   id: string,
 ): Promise<Response> {
-  await authenticate(request, config);
+  await signedInMember(request, env, config);
   const login = await pendingLogin(env, id);
   return json({ device: login.device, place: login.place, expires_at: login.expires_at });
 }
@@ -122,9 +124,11 @@ export async function approveBusinessLogin(
   config: Config,
   id: string,
 ): Promise<Response> {
-  const session = await authenticate(request, config);
+  const member = await signedInMember(request, env, config);
   await pendingLogin(env, id);
-  const body = await readJson<{ message?: unknown; signature?: unknown }>(request);
+  const body = await readJson<{ message?: unknown; signature?: unknown; initial_owners?: unknown }>(
+    request,
+  );
   if (typeof body.message !== 'string' || typeof body.signature !== 'string')
     throw new HttpError(400, 'INVALID_REQUEST');
   const message = parseSiweMessage(body.message);
@@ -133,7 +137,7 @@ export async function approveBusinessLogin(
   if (
     !network ||
     !message.address ||
-    !isAddressEqual(message.address, session.address) ||
+    !isAddressEqual(message.address, member.address) ||
     message.nonce !== id ||
     message.domain !== domain ||
     message.uri !== config.webOrigin ||
@@ -141,18 +145,20 @@ export async function approveBusinessLogin(
     Math.abs(Date.now() - message.issuedAt.getTime()) > REQUEST_SECONDS * 1000
   )
     throw new HttpError(400, 'INVALID_MESSAGE');
+  // Signed by an owner now, by the approvals Wallet Core verified (see `createSession`).
   if (
-    !(await verifySiweMessage(network.client, {
+    !(await messageSigner(network.client, {
+      account: member.address,
+      owners: await currentOwners(env, config, member, body.initial_owners),
       message: body.message,
       signature: body.signature as Hex,
-      domain,
     }))
   )
     throw new HttpError(401, 'SIGNATURE_INVALID');
   const approved = await env.WALLET_DB.prepare(
     'UPDATE business_logins SET member_id = ?, address = ? WHERE id = ? AND member_id IS NULL AND expires_at >= ? RETURNING id',
   )
-    .bind(session.userId, session.address, id, now())
+    .bind(member.id, getAddress(member.address), id, now())
     .first();
   if (!approved) throw new HttpError(410, 'LOGIN_EXPIRED');
   return json({ approved: true });

@@ -1,5 +1,6 @@
 import { importPKCS8, SignJWT } from 'jose';
 import { formatUnits } from 'viem';
+import type { Budget } from './budget';
 import type { Config } from './config';
 import { HttpError, json, readJson } from './http';
 import { signedInMember } from './profile';
@@ -64,70 +65,105 @@ async function firebaseAccessToken(account: NonNullable<Config['firebase']>): Pr
   return access_token;
 }
 
+/** How recent a movement must be to be notified: older ones are history, not news. */
+export const NOTIFY_SECONDS = 3_600;
+
 /** EVM addresses are kept lowercase; Stellar strkeys as they are. */
 const stored = (address: string) => (address.startsWith('0x') ? address.toLowerCase() : address);
 const short = (address: string) => `${address.slice(0, 6)}…${address.slice(-4)}`;
 
+/** A movement to tell its receiver about. */
+export interface Notice {
+  from: string;
+  to: string;
+  value: bigint;
+  coin: { symbol: string; decimals: number };
+  /**
+   * Set for money that arrived from another network (a CCTP mint, which comes from no one): the
+   * network's name, or null when it is not known.
+   */
+  origin?: string | null;
+  /** The movement's id: a device shows one notification per movement, even if it comes twice. */
+  tag: string;
+}
+
 /**
- * Notifies members of the transfers they just received, on every device they enabled. Only
- * the fact and the amount travel: the app reads the details from the chain and the API.
+ * Sends `notice` to every device its receiver enabled. Only the fact and the amount travel: the app
+ * reads the details from the chain and the API. `sent` also when nobody is to be told; `retry`
+ * when FCM failed for a device; `budget` when the run has no requests left for it.
  */
-export async function notifyReceived(
+export async function deliver(
   env: Env,
   config: Config,
-  transfers: readonly {
-    from: string;
-    to: string;
-    value: bigint;
-    /** USDC unless said otherwise (AUSD), and its decimals. */
-    coin?: { symbol: string; decimals: number };
-  }[],
-) {
-  if (!config.firebase || transfers.length === 0) return;
-  for (const transfer of transfers) {
-    // Addresses are EVM accounts or members' Stellar accounts.
-    const { results } = await env.WALLET_DB.prepare(
-      `SELECT push_tokens.token, push_tokens.language, sender.username AS sender
-       FROM members JOIN push_tokens ON push_tokens.member_id = members.id
-       LEFT JOIN members AS sender ON sender.address =
-         COALESCE((SELECT member_address FROM stellar_accounts WHERE address = ?1), ?1)
-       WHERE members.address =
-         COALESCE((SELECT member_address FROM stellar_accounts WHERE address = ?2), ?2)`,
-    )
-      .bind(stored(transfer.from), stored(transfer.to))
-      .all<{ token: string; language: string; sender: string | null }>();
-    const coin = transfer.coin ?? { symbol: 'USDC', decimals: 6 };
-    const amount = Number(formatUnits(transfer.value, coin.decimals));
-    for (const { token, language, sender } of results) {
-      const en = language === 'en';
-      const from = sender ? `@${sender}` : short(transfer.from);
-      const message = {
-        token,
-        data: {
-          type: 'movement',
-          title: en
-            ? `You received ${amount.toLocaleString('en', { minimumFractionDigits: 2 })} ${coin.symbol}`
-            : `Recibiste ${amount.toLocaleString('es', { minimumFractionDigits: 2 })} ${coin.symbol}`,
-          body: en ? `From ${from}` : `De ${from}`,
-          link: '/statement',
+  notice: Notice,
+  budget: Budget,
+): Promise<'sent' | 'retry' | 'budget'> {
+  if (!config.firebase) return 'sent';
+  // Addresses are EVM accounts or members' Stellar accounts.
+  const { results } = await env.WALLET_DB.prepare(
+    `SELECT push_tokens.token, push_tokens.language, sender.username AS sender
+     FROM members JOIN push_tokens ON push_tokens.member_id = members.id
+     LEFT JOIN members AS sender ON sender.address = ?1 OR sender.stellar_address = ?1
+     WHERE members.address = ?2 OR members.stellar_address = ?2`,
+  )
+    .bind(stored(notice.from), stored(notice.to))
+    .all<{ token: string; language: string; sender: string | null }>();
+  const renewing = !accessToken || accessToken.expiresAt <= Math.floor(Date.now() / 1000) + 60;
+  // Every device at once or none: a retry sends to all of them again (the tag keeps it one).
+  if (!budget.take(results.length + (renewing && results.length > 0 ? 1 : 0))) return 'budget';
+  const amount = Number(formatUnits(notice.value, notice.coin.decimals));
+  let outcome: 'sent' | 'retry' = 'sent';
+  for (const { token, language, sender } of results) {
+    const en = language === 'en';
+    // The exact amount, as the app shows a movement: two to six decimals.
+    const value = `${amount.toLocaleString(en ? 'en' : 'es', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 6,
+    })} ${notice.coin.symbol}`;
+    const arrived = notice.origin !== undefined;
+    const from = sender ? `@${sender}` : short(notice.from);
+    const origin = notice.origin ?? (en ? 'another network' : 'otra red');
+    const message = {
+      token,
+      data: {
+        type: 'movement',
+        tag: notice.tag,
+        title: arrived
+          ? en
+            ? `${value} arrived`
+            : `Llegaron ${value}`
+          : en
+            ? `You received ${value}`
+            : `Recibiste ${value}`,
+        body: arrived
+          ? en
+            ? `From ${origin}`
+            : `Desde ${origin}`
+          : en
+            ? `From ${from}`
+            : `De ${from}`,
+        link: '/statement',
+      },
+      webpush: { headers: { Urgency: 'high' } },
+    };
+    const response = await fetch(
+      `https://fcm.googleapis.com/v1/projects/${config.firebase.projectId}/messages:send`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${await firebaseAccessToken(config.firebase)}`,
+          'Content-Type': 'application/json',
         },
-        webpush: { headers: { Urgency: 'high' } },
-      };
-      const response = await fetch(
-        `https://fcm.googleapis.com/v1/projects/${config.firebase.projectId}/messages:send`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${await firebaseAccessToken(config.firebase)}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ message }),
-        },
-      );
-      // An uninstalled app or revoked permission leaves a token FCM no longer knows.
-      if (response.status === 404)
-        await env.WALLET_DB.prepare('DELETE FROM push_tokens WHERE token = ?').bind(token).run();
-      else if (!response.ok) console.error('FCM send failed', response.status);
+        body: JSON.stringify({ message }),
+      },
+    ).catch(() => null);
+    // An uninstalled app or revoked permission leaves a token FCM no longer knows.
+    if (response?.status === 404)
+      await env.WALLET_DB.prepare('DELETE FROM push_tokens WHERE token = ?').bind(token).run();
+    else if (!response?.ok) {
+      console.error('FCM send failed', response?.status ?? 'network');
+      outcome = 'retry';
     }
   }
+  return outcome;
 }

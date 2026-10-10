@@ -5,16 +5,19 @@ import { config, type Config } from './config';
 import { enabledNetwork, json, rateLimit, readJson } from './http';
 
 /**
- * ERC-4337 bundler of one network (one instance per network, named by its CAIP-2 id). Requests run
- * one at a time: each send uses the next relayer nonce.
+ * ERC-4337 bundler of one network (one instance per network, named by its CAIP-2 id). Sends run one
+ * at a time, each reserving the next relayer nonce; estimates, receipts and the rest do not wait
+ * behind them.
  */
 export class Bundler extends DurableObject<Env> {
   private bundler?: ReturnType<typeof createBundler>;
-  private queue: Promise<unknown> = Promise.resolve();
+  private sends: Promise<unknown> = Promise.resolve();
 
   rpc(networkId: string, body: unknown) {
-    const run = this.queue.then(() => bundlerJsonRpc(this.bundlerFor(networkId), body));
-    this.queue = run.catch(() => undefined);
+    const handle = () => bundlerJsonRpc(this.bundlerFor(networkId), body);
+    if ((body as { method?: unknown } | null)?.method !== 'eth_sendUserOperation') return handle();
+    const run = this.sends.then(handle);
+    this.sends = run.catch(() => undefined);
     return run;
   }
 

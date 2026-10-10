@@ -1,11 +1,29 @@
 import { DurableObject } from 'cloudflare:workers';
-import { Address as StellarAddress, scValToNative, xdr, type rpc } from '@stellar/stellar-sdk';
-import { isAddressEqual, isHex, recoverMessageAddress, size, type Address, type Hex } from 'viem';
+import {
+  Address as StellarAddress,
+  scValToNative,
+  StrKey,
+  xdr,
+  type rpc,
+} from '@stellar/stellar-sdk';
+import {
+  bytesToHex,
+  decodeEventLog,
+  isAddressEqual,
+  isHex,
+  parseAbiItem,
+  recoverMessageAddress,
+  size,
+  toEventSelector,
+  type Address,
+  type Hex,
+} from 'viem';
 import { crosschainStatus } from '@gatopago/shared/crosschain';
-import { XLM_DECIMALS, type StellarNetwork } from '@gatopago/shared/networks';
+import { walletNetworks, XLM_DECIMALS, type StellarNetwork } from '@gatopago/shared/networks';
 import {
   burnMessage,
   deployAccountOperation,
+  hookRecipient,
   fromStellarUnits,
   mintAndForwardOperation,
   sendStellarOperation,
@@ -16,12 +34,13 @@ import {
 } from '@gatopago/shared/stellar';
 import { keyOwner } from '@gatopago/shared/wallet';
 import { currentOwners } from './approvals';
-import type { Budget } from './budget';
-import { config, type Config } from './config';
+import { Budget } from './budget';
+import { config, type Config, type Network } from './config';
 import { enabledNetwork, HttpError, json, readJson } from './http';
 import { consumeDailyBudget } from './paymaster';
 import { signedInMember } from './profile';
-import { notifyReceived } from './push';
+import { hypersyncHeight, hypersyncLogs } from './hypersync';
+import { NOTIFY_SECONDS } from './push';
 
 type Stellar = NonNullable<Config['stellar']>;
 
@@ -31,9 +50,20 @@ const MAX_FEE = 5_000_000n;
 const RANGE = 120;
 const ROUNDS = 10;
 const PAGE = 1_000;
+/** What one `getEvents` takes: filters, and topic patterns in each (the RPC's limits). */
+const FILTERS_PER_REQUEST = 5;
+const PATTERNS_PER_FILTER = 5;
 /** How far back the indexer catches up after a pause: a day, within every RPC's retention. */
 const CATCH_UP = 17_280;
 const RELAY_SECONDS = 2 * 86_400;
+/** While a burn toward Stellar is this recent, its attestation is checked every few seconds. */
+const FAST_RELAY_SECONDS = 1_800;
+const WAKE_MS = 5_000;
+/** `eth_getLogs` ranges per network and run when no HyperSync reads the burns toward Stellar. */
+const BURN_ROUNDS = 5;
+const DEPOSIT_FOR_BURN = parseAbiItem(
+  'event DepositForBurn(address indexed burnToken, uint256 amount, address indexed depositor, bytes32 mintRecipient, uint32 destinationDomain, bytes32 destinationTokenMessenger, bytes32 destinationCaller, uint256 maxFee, uint32 indexed minFinalityThreshold, bytes hookData)',
+);
 /** Longest an Ed25519 key approval may stay valid. */
 const APPROVAL_SECONDS = 3_600;
 
@@ -44,7 +74,9 @@ function enabledStellar(config: Config): Stellar {
 
 /**
  * Sends the sponsor's Stellar transactions one at a time (one instance): each takes the account's
- * next sequence number.
+ * next sequence number. It also mints the burns toward Stellar once Circle attests them: woken when
+ * one is recorded, it checks again every few seconds while a recent one waits (the attestation is
+ * offchain: no event announces it), and the minute cron wakes it for older ones.
  */
 export class StellarRelayer extends DurableObject<Env> {
   private queue: Promise<unknown> = Promise.resolve();
@@ -66,11 +98,40 @@ export class StellarRelayer extends DurableObject<Env> {
     this.queue = result;
     return result;
   }
+
+  /** Relays pending burns in a few seconds, unless a relay is already scheduled. */
+  async wake() {
+    if ((await this.ctx.storage.getAlarm()) === null)
+      await this.ctx.storage.setAlarm(Date.now() + WAKE_MS);
+  }
+
+  async alarm() {
+    const settings = config(this.env);
+    if (!settings.stellar) return;
+    await relayBurns(
+      this.env,
+      settings,
+      settings.stellar,
+      new Budget(settings.subrequestsPerRun),
+      async (operation) => sent(await this.send(operation.toXdr('base64'))),
+    );
+    if (await relaysWaiting(this.env, FAST_RELAY_SECONDS))
+      await this.ctx.storage.setAlarm(Date.now() + WAKE_MS);
+  }
 }
 
-async function relay(env: Env, operation: xdr.Operation) {
-  const relayer = env.STELLAR_RELAYER.get(env.STELLAR_RELAYER.idFromName('relayer'));
-  const result = await relayer.send(operation.toXdr('base64'));
+/** Whether a burn toward Stellar recorded in the last `seconds` still waits for its mint. */
+const relaysWaiting = async (env: Env, seconds: number) =>
+  (await env.WALLET_DB.prepare(
+    'SELECT 1 AS waiting FROM stellar_relays WHERE relayed_hash IS NULL AND created_at > ? LIMIT 1',
+  )
+    .bind(Math.floor(Date.now() / 1000) - seconds)
+    .first('waiting')) !== null;
+
+const relayer = (env: Env) => env.STELLAR_RELAYER.get(env.STELLAR_RELAYER.idFromName('relayer'));
+
+/** The hash of a relayer send, or its failure as an error. */
+function sent(result: { hash: string } | { error: string }) {
   if ('error' in result) {
     console.error('Stellar send failed', result.error);
     const code = /STELLAR_[A-Z_]+/.exec(result.error)?.[0];
@@ -79,24 +140,25 @@ async function relay(env: Env, operation: xdr.Operation) {
   return result;
 }
 
-/** The member's Stellar address, registered so the indexer finds its transfers. */
-async function stellarAccount(env: Env, stellar: Stellar, member: Address): Promise<string> {
-  const account = stellarAccountAddress(stellar.network, stellar.keypair.publicKey(), member);
-  await env.WALLET_DB.prepare(
-    'INSERT OR IGNORE INTO stellar_accounts (network, address, member_address) VALUES (?, ?, ?)',
-  )
-    .bind(stellar.id, account, member.toLowerCase())
-    .run();
-  return account;
+async function relay(env: Env, operation: xdr.Operation) {
+  return sent(await relayer(env).send(operation.toXdr('base64')));
 }
 
-/** The member's approved Ed25519 keys, with the EVM owner key that approved each. */
+/** The member's Stellar address: it derives from the sponsor key and the member's EVM address. */
+const stellarAccount = (stellar: Stellar, member: Address) =>
+  stellarAccountAddress(stellar.network, stellar.keypair.publicKey(), member);
+
+/**
+ * The member's approved Ed25519 keys, each with the EVM owner key that approved it and that approval
+ * (`stellarKeyApproval` until `expires_at`, signed), so the app can check it too.
+ */
 async function approvedKeys(env: Env, member: Address) {
   const { results } = await env.WALLET_DB.prepare(
-    'SELECT public_key, owner FROM stellar_keys WHERE member_address = ? ORDER BY created_at',
+    `SELECT public_key, owner, signature, expires_at FROM stellar_keys
+     WHERE member_address = ? ORDER BY created_at`,
   )
     .bind(member.toLowerCase())
-    .all<{ public_key: Hex; owner: Address }>();
+    .all<{ public_key: Hex; owner: Address; signature: Hex; expires_at: number }>();
   return results;
 }
 
@@ -114,7 +176,7 @@ const signingKeys = (keys: { public_key: Hex; owner: Address }[], owners: readon
 export async function readStellar(request: Request, env: Env, config: Config): Promise<Response> {
   const stellar = enabledStellar(config);
   const member = await signedInMember(request, env, config);
-  const account = await stellarAccount(env, stellar, member.address);
+  const account = stellarAccount(stellar, member.address);
   return json({
     network: stellar.id,
     account,
@@ -159,13 +221,17 @@ export async function addStellarKey(request: Request, env: Env, config: Config):
   if (!owner || !owners.some((current) => current.toLowerCase() === keyOwner(owner)))
     throw new HttpError(403, 'NOT_AN_OWNER');
   await env.WALLET_DB.prepare(
-    `INSERT INTO stellar_keys (member_address, public_key, owner, created_at) VALUES (?, ?, ?, ?)
-     ON CONFLICT (member_address, public_key) DO UPDATE SET owner = excluded.owner`,
+    `INSERT INTO stellar_keys (member_address, public_key, owner, signature, expires_at, created_at)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT (member_address, public_key) DO UPDATE SET
+       owner = excluded.owner, signature = excluded.signature, expires_at = excluded.expires_at`,
   )
     .bind(
       member.address.toLowerCase(),
       publicKey,
       owner.toLowerCase(),
+      body.signature,
+      expiresAt,
       Math.floor(Date.now() / 1000),
     )
     .run();
@@ -185,7 +251,7 @@ export async function createStellarAccount(
   const stellar = enabledStellar(config);
   const member = await signedInMember(request, env, config);
   const body = await readJson<{ initial_owners?: unknown }>(request);
-  const account = await stellarAccount(env, stellar, member.address);
+  const account = stellarAccount(stellar, member.address);
   if (!(await stellarAccountExists(stellar.server, account))) {
     const owners = await currentOwners(env, config, member, body.initial_owners);
     const keys = signingKeys(await approvedKeys(env, member.address), owners);
@@ -244,7 +310,7 @@ export async function submitStellar(request: Request, env: Env, config: Config):
   } catch {
     throw new HttpError(400, 'INVALID_REQUEST');
   }
-  const account = await stellarAccount(env, stellar, member.address);
+  const account = stellarAccount(stellar, member.address);
   // The sponsor signs the transaction: no entry may borrow its authority.
   if (
     !sponsorable(stellar.network, account, func) ||
@@ -300,7 +366,7 @@ export async function readStellarSubmission(
 
 /**
  * `POST /app/v1/stellar/relays`: a CCTP burn the member sent toward Stellar, which the relayer mints
- * once Circle attests it.
+ * once Circle attests it (seconds after, `StellarRelayer`).
  */
 export async function requestStellarRelay(
   request: Request,
@@ -325,6 +391,7 @@ export async function requestStellarRelay(
       Math.floor(Date.now() / 1000),
     )
     .run();
+  await relayer(env).wake();
   return json({}, 202);
 }
 
@@ -357,47 +424,148 @@ export async function readStellarRelay(
   );
 }
 
-/** Every minute: registers members' Stellar addresses, mints attested burns, reads transfers. */
+/**
+ * Every minute: registers members' Stellar addresses, finds burns toward them, has the relayer mint
+ * what waits, and reads transfers.
+ */
 export async function syncStellar(env: Env, config: Config, budget: Budget): Promise<void> {
   const stellar = config.stellar;
   if (!stellar) return;
   await registerAccounts(env, stellar);
-  await relayBurns(env, config, stellar, budget);
-  await indexTransfers(env, config, stellar, budget);
+  // A source that fails leaves its blocks for the next run; transfers are still read.
+  await findBurnsToMembers(env, config, stellar, budget).catch((error: unknown) =>
+    console.error(error),
+  );
+  if (await relaysWaiting(env, RELAY_SECONDS)) await relayer(env).wake();
+  await indexTransfers(env, stellar, budget);
 }
 
+/**
+ * Writes each new member's Stellar address once, so the indexer and the notices find a member by
+ * it without deriving every member's address on each run.
+ */
 async function registerAccounts(env: Env, stellar: Stellar) {
   const { results } = await env.WALLET_DB.prepare(
-    `SELECT address FROM members
-     WHERE address NOT IN (SELECT member_address FROM stellar_accounts WHERE network = ?) LIMIT 500`,
-  )
-    .bind(stellar.id)
-    .all<{ address: Address }>();
+    'SELECT address FROM members WHERE stellar_address IS NULL LIMIT 500',
+  ).all<{ address: Address }>();
   if (results.length === 0) return;
   await env.WALLET_DB.batch(
     results.map(({ address }) =>
-      env.WALLET_DB.prepare(
-        'INSERT OR IGNORE INTO stellar_accounts (network, address, member_address) VALUES (?, ?, ?)',
-      ).bind(
-        stellar.id,
-        stellarAccountAddress(stellar.network, stellar.keypair.publicKey(), address),
+      env.WALLET_DB.prepare('UPDATE members SET stellar_address = ? WHERE address = ?').bind(
+        stellarAccount(stellar, address),
         address,
       ),
     ),
   );
 }
 
-/** Mints attested burns of members toward Stellar; anyone could, so nothing is lost if it waits. */
-async function relayBurns(env: Env, config: Config, stellar: Stellar, budget: Budget) {
+/**
+ * Burns toward members' Stellar accounts sent from any wallet (an exchange, MetaMask): the app
+ * records its own, these are found in the DepositForBurn events of each network's TokenMessenger,
+ * from the last block read on. They need no finality wait: Circle attests only final burns, and
+ * one a reorg drops is never attested.
+ */
+async function findBurnsToMembers(env: Env, config: Config, stellar: Stellar, budget: Budget) {
+  const forwarder = bytesToHex(StrKey.decodeContract(stellar.network.cctp.forwarder));
+  for (const network of config.networks.values()) {
+    const key = `stellar-burns:${network.id}`;
+    const cursor = await readCursor(env, key);
+    const read = await burnsSince(network, cursor === null ? null : BigInt(cursor) + 1n, budget);
+    if (!read) return;
+    const found = read.burns.flatMap(({ transactionHash, args }) => {
+      const recipient =
+        args.destinationDomain === stellar.network.cctp.domain && args.mintRecipient === forwarder
+          ? hookRecipient(args.hookData)
+          : null;
+      return recipient ? [{ transactionHash, recipient }] : [];
+    });
+    const members = await stellarMembers(
+      env,
+      found.map(({ recipient }) => recipient),
+    );
+    const now = Math.floor(Date.now() / 1000);
+    const relays = found.flatMap(({ transactionHash, recipient }) => {
+      const member = members.get(recipient);
+      return member
+        ? [
+            env.WALLET_DB.prepare(
+              `INSERT OR IGNORE INTO stellar_relays (source_network, transaction_hash, member_address, created_at)
+               VALUES (?, ?, ?, ?)`,
+            ).bind(network.id, transactionHash.toLowerCase(), member, now),
+          ]
+        : [];
+    });
+    const results = await env.WALLET_DB.batch([...relays, saveCursor(env, key, Number(read.to))]);
+    if (results.slice(0, relays.length).some(({ meta }) => meta.changes > 0))
+      await relayer(env).wake();
+  }
+}
+
+/**
+ * The DepositForBurn events of `network` from block `from` on, and the last block read; on the
+ * first run (`from` null), none, from the latest block on. Null when out of requests.
+ */
+async function burnsSince(network: Network, from: bigint | null, budget: Budget) {
+  const source = network.index.hypersync;
+  if (source) {
+    if (!budget.take()) return null;
+    if (from === null) return { burns: [], to: await hypersyncHeight(source) };
+    const page = await hypersyncLogs(source, {
+      address: network.cctp.tokenMessenger,
+      topic0: toEventSelector(DEPOSIT_FOR_BURN),
+      fromBlock: from,
+    });
+    return {
+      burns: page.logs.map(({ transactionHash, topics, data }) => ({
+        transactionHash,
+        args: decodeEventLog({ abi: [DEPOSIT_FOR_BURN], topics, data }).args,
+      })),
+      to: page.nextBlock - 1n,
+    };
+  }
+  const { client, range } = network.index;
+  if (!budget.take()) return null;
+  const latest = await client.getBlockNumber();
+  if (from === null) return { burns: [], to: latest };
+  const burns = [];
+  let to = from - 1n;
+  for (let round = 0; to < latest && round < BURN_ROUNDS && budget.take(); round++) {
+    const end = to + range < latest ? to + range : latest;
+    const logs = await client.getLogs({
+      address: network.cctp.tokenMessenger,
+      event: DEPOSIT_FOR_BURN,
+      fromBlock: to + 1n,
+      toBlock: end,
+      strict: true,
+    });
+    burns.push(...logs.map(({ transactionHash, args }) => ({ transactionHash, args })));
+    to = end;
+  }
+  return { burns, to };
+}
+
+/**
+ * Mints attested burns toward Stellar that a member sent or that pay a member's Stellar account;
+ * anyone could, so nothing is lost if it waits. A burn recorded for two members is minted once.
+ */
+async function relayBurns(
+  env: Env,
+  config: Config,
+  stellar: Stellar,
+  budget: Budget,
+  send: (operation: xdr.Operation) => Promise<{ hash: string }>,
+) {
   const { results } = await env.WALLET_DB.prepare(
     `SELECT source_network, transaction_hash, member_address FROM stellar_relays
      WHERE relayed_hash IS NULL AND created_at > ? LIMIT 20`,
   )
     .bind(Math.floor(Date.now() / 1000) - RELAY_SECONDS)
     .all<{ source_network: string; transaction_hash: string; member_address: Address }>();
+  const minted = new Set<string>();
   for (const pending of results) {
     const network = config.networks.get(pending.source_network);
-    if (!network) continue;
+    const burnId = `${pending.source_network}:${pending.transaction_hash}`;
+    if (!network || minted.has(burnId)) continue;
     // Circle's status, then the mint sent through the relayer.
     if (!budget.take(2)) return;
     const status = await crosschainStatus(
@@ -407,31 +575,39 @@ async function relayBurns(env: Env, config: Config, stellar: Stellar, budget: Bu
     ).catch(() => null);
     if (!status?.attested) continue;
     const burn = burnMessage(status.attested.message);
-    const done = (hash: string) =>
-      env.WALLET_DB.prepare(
-        `UPDATE stellar_relays SET relayed_hash = ?
-         WHERE source_network = ? AND transaction_hash = ? AND member_address = ?`,
-      )
-        .bind(hash, pending.source_network, pending.transaction_hash, pending.member_address)
-        .run();
-    // Only the member's own burns toward Stellar.
+    const member = pending.member_address;
     if (
       burn.destinationDomain !== stellar.network.cctp.domain ||
-      !isAddressEqual(burn.sender, pending.member_address)
+      !(
+        isAddressEqual(burn.sender, member) ||
+        burn.recipient ===
+          stellarAccountAddress(stellar.network, stellar.keypair.publicKey(), member)
+      )
     ) {
-      await done('rejected');
+      // Rejected for this member only: reporting someone else's burn cannot hold back theirs.
+      await env.WALLET_DB.prepare(
+        `UPDATE stellar_relays SET relayed_hash = 'rejected'
+         WHERE source_network = ? AND transaction_hash = ? AND member_address = ?`,
+      )
+        .bind(pending.source_network, pending.transaction_hash, member)
+        .run();
       continue;
     }
     try {
-      const { hash } = await relay(
-        env,
+      const { hash } = await send(
         mintAndForwardOperation(
           stellar.network,
           status.attested.message,
           status.attested.attestation,
         ),
       );
-      await done(hash);
+      minted.add(burnId);
+      await env.WALLET_DB.prepare(
+        `UPDATE stellar_relays SET relayed_hash = ?
+         WHERE source_network = ? AND transaction_hash = ? AND relayed_hash IS NULL`,
+      )
+        .bind(hash, pending.source_network, pending.transaction_hash)
+        .run();
     } catch {
       // Already minted by someone else, or the network failed: retried until the row expires.
     }
@@ -475,99 +651,191 @@ function transferOf(network: StellarNetwork, event: rpc.Api.EventResponse): Stel
 }
 
 /**
- * Reads USDC and XLM transfer events since the last ledger read and keeps those of members (the RPC
- * cannot filter by many addresses), notifying what they received.
+ * The `getEvents` requests that find USDC and XLM transfers from or to `accounts`: the RPC matches
+ * the addresses, so only members' transfers are read (a testnet window holds hundreds of others,
+ * more than a run's CPU can decode).
  */
-async function indexTransfers(env: Env, config: Config, stellar: Stellar, budget: Budget) {
-  const { server, network } = stellar;
-  if (!budget.take()) return;
-  const latest = (await server.getLatestLedger()).sequence;
-  const cursor = await env.WALLET_DB.prepare('SELECT block FROM index_cursors WHERE network = ?')
-    .bind(stellar.id)
-    .first<number>('block');
-  let from = Math.max(cursor === null ? latest : cursor + 1, latest - CATCH_UP);
-  const filters = [
-    {
+function transferRequests(network: StellarNetwork, accounts: readonly string[]) {
+  const transfer = xdr.ScVal.scvSymbol('transfer').toXdr('base64');
+  const patterns = accounts.flatMap((account) => {
+    const topic = new StellarAddress(account).toScVal().toXdr('base64');
+    return [
+      [transfer, topic, '*', '*'],
+      [transfer, '*', topic, '*'],
+    ];
+  });
+  const filters = [];
+  for (let i = 0; i < patterns.length; i += PATTERNS_PER_FILTER)
+    filters.push({
       type: 'contract' as const,
       contractIds: [network.usdc, network.xlm],
-      topics: [[xdr.ScVal.scvSymbol('transfer').toXdr('base64'), '*', '*', '*']],
-    },
-  ];
-  for (let round = 0; from <= latest && round < ROUNDS; round++) {
-    const to = Math.min(from + RANGE - 1, latest);
-    const events: rpc.Api.EventResponse[] = [];
-    // Out of requests: this window is read again on the next run.
-    if (!budget.take()) return;
-    let page = await server.getEvents({
-      startLedger: from,
-      endLedger: to + 1,
-      filters,
-      limit: PAGE,
+      topics: patterns.slice(i, i + PATTERNS_PER_FILTER),
     });
-    events.push(...page.events);
-    while (page.events.length === PAGE) {
+  const requests = [];
+  for (let i = 0; i < filters.length; i += FILTERS_PER_REQUEST)
+    requests.push(filters.slice(i, i + FILTERS_PER_REQUEST));
+  return requests;
+}
+
+/**
+ * Reads members' USDC and XLM transfer events since the last ledger read, notifying what they
+ * received.
+ */
+export async function indexTransfers(env: Env, stellar: Stellar, budget: Budget) {
+  const { server, network } = stellar;
+  if (!budget.take()) return;
+  // `getHealth`, not `getLatestLedger`: the SDK decodes the whole ledger's metadata for that one.
+  const { latestLedger: latest, oldestLedger } = await server.getHealth();
+  const cursor = await readCursor(env, stellar.id);
+  let from = Math.max(cursor === null ? latest : cursor + 1, latest - CATCH_UP, oldestLedger);
+  const { results: accounts } = await env.WALLET_DB.prepare(
+    'SELECT stellar_address FROM members WHERE stellar_address IS NOT NULL',
+  ).all<{ stellar_address: string }>();
+  const requests = transferRequests(
+    network,
+    accounts.map(({ stellar_address }) => stellar_address),
+  );
+  // A run that ran out of requests in the middle of a window left where it was in it: the next
+  // group of members to read and the window's last ledger, so it goes on instead of starting over.
+  const partial = await readCursor(env, `range:${stellar.id}`);
+  let group = partial === null ? 0 : ((await readCursor(env, `group:${stellar.id}`)) ?? 0);
+  for (let round = 0; from <= latest && round < ROUNDS; round++) {
+    const to = partial !== null && round === 0 ? partial : Math.min(from + RANGE - 1, latest);
+    for (; group < requests.length; group++) {
+      // Out of requests: this group is read again on the next run.
       if (!budget.take()) return;
-      page = await server.getEvents({ cursor: page.cursor, filters, limit: PAGE });
-      events.push(...page.events.filter((event) => event.ledger <= to));
-      if (page.events.some((event) => event.ledger > to)) break;
+      const filters = requests[group];
+      const events: rpc.Api.EventResponse[] = [];
+      let page = await server.getEvents({
+        startLedger: from,
+        endLedger: to + 1,
+        filters,
+        limit: PAGE,
+      });
+      events.push(...page.events);
+      while (page.events.length === PAGE) {
+        if (!budget.take()) return;
+        page = await server.getEvents({ cursor: page.cursor, filters, limit: PAGE });
+        events.push(...page.events.filter((event) => event.ledger <= to));
+        if (page.events.some((event) => event.ledger > to)) break;
+      }
+      const done = group + 1 === requests.length;
+      await storeStellarTransfers(env, stellar, events, [
+        // Once every group read the window, the cursor moves past it.
+        ...(done
+          ? [saveCursor(env, stellar.id, to), clearProgress(env, stellar.id)]
+          : saveProgress(env, stellar.id, group + 1, to)),
+      ]);
     }
-    const transfers = events
-      .map((event) => transferOf(network, event))
-      .filter((transfer) => transfer !== null);
-    const members = await stellarMembers(
-      env,
-      stellar,
-      transfers.flatMap(({ from, to }) => [from, to]),
-    );
-    const kept = transfers.filter(({ from, to }) => members.has(from) || members.has(to));
-    const crosschain = [network.cctp.tokenMessengerMinter, network.cctp.forwarder];
-    const results = await env.WALLET_DB.batch([
-      ...kept.map((transfer) =>
-        env.WALLET_DB.prepare(
-          `INSERT OR IGNORE INTO transfers (network, transaction_hash, log_index, block_number,
-             timestamp, from_address, to_address, amount, kind, token)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        ).bind(
-          stellar.id,
-          transfer.transactionHash,
-          transfer.logIndex,
-          transfer.ledger,
-          transfer.timestamp,
-          transfer.from,
-          transfer.to,
-          transfer.value.toString(),
-          crosschain.includes(transfer.from) || crosschain.includes(transfer.to)
-            ? 'crosschain'
-            : 'transfer',
-          transfer.coin.symbol,
-        ),
-      ),
-      env.WALLET_DB.prepare(
-        `INSERT INTO index_cursors (network, block) VALUES (?, ?)
-         ON CONFLICT (network) DO UPDATE SET block = excluded.block`,
-      ).bind(stellar.id, to),
-    ]);
-    await notifyReceived(
-      env,
-      config,
-      kept.filter((transfer, i) => members.has(transfer.to) && results[i].meta.changes > 0),
-    );
+    // Without members there is nothing to read: the window is passed all the same.
+    if (requests.length === 0) await saveCursor(env, stellar.id, to).run();
+    group = 0;
     from = to + 1;
   }
 }
 
-/** Members' Stellar addresses among `addresses`. D1 binds at most 100 parameters per statement. */
-async function stellarMembers(env: Env, stellar: Stellar, addresses: string[]) {
+const readCursor = (env: Env, key: string) =>
+  env.WALLET_DB.prepare('SELECT block FROM index_cursors WHERE network = ?')
+    .bind(key)
+    .first<number>('block');
+
+const saveCursor = (env: Env, key: string, block: number) =>
+  env.WALLET_DB.prepare(
+    `INSERT INTO index_cursors (network, block) VALUES (?, ?)
+     ON CONFLICT (network) DO UPDATE SET block = excluded.block`,
+  ).bind(key, block);
+
+/** Mid-window progress of the indexer: the next group of members, and the window's end. */
+const saveProgress = (env: Env, id: string, group: number, to: number) => [
+  saveCursor(env, `group:${id}`, group),
+  saveCursor(env, `range:${id}`, to),
+];
+
+const clearProgress = (env: Env, id: string) =>
+  env.WALLET_DB.prepare('DELETE FROM index_cursors WHERE network IN (?, ?)').bind(
+    `group:${id}`,
+    `range:${id}`,
+  );
+
+/**
+ * Keeps the members' transfers among `events`, with `progress` in the same batch; a recent one a
+ * member received is stored with its notification pending (`sendNotifications`). A transfer
+ * between two members comes in two groups: the second finds it stored and changes nothing.
+ */
+async function storeStellarTransfers(
+  env: Env,
+  stellar: Stellar,
+  events: rpc.Api.EventResponse[],
+  progress: D1PreparedStatement[],
+) {
+  const { network } = stellar;
+  const transfers = events
+    .map((event) => transferOf(network, event))
+    .filter((transfer) => transfer !== null);
+  const members = await stellarMembers(
+    env,
+    transfers.flatMap(({ from, to }) => [from, to]),
+  );
+  const kept = transfers.filter(({ from, to }) => members.has(from) || members.has(to));
+  const crosschain = [network.cctp.tokenMessengerMinter, network.cctp.forwarder];
+  const now = Math.floor(Date.now() / 1000);
+  await env.WALLET_DB.batch([
+    ...kept.map((transfer) =>
+      env.WALLET_DB.prepare(
+        `INSERT OR IGNORE INTO transfers (network, transaction_hash, log_index, block_number,
+           timestamp, from_address, to_address, amount, kind, token, notify_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind(
+        stellar.id,
+        transfer.transactionHash,
+        transfer.logIndex,
+        transfer.ledger,
+        transfer.timestamp,
+        transfer.from,
+        transfer.to,
+        transfer.value.toString(),
+        crosschain.includes(transfer.from) || crosschain.includes(transfer.to)
+          ? 'crosschain'
+          : 'transfer',
+        transfer.coin.symbol,
+        members.has(transfer.to) && transfer.timestamp >= now - NOTIFY_SECONDS ? now : null,
+      ),
+    ),
+    ...progress,
+  ]);
+}
+
+/**
+ * The network that USDC minted on Stellar came from: Wallet Core relayed that mint itself, from a
+ * burn it recorded (`stellar_relays`). Null when the mint was not one of its relays.
+ */
+export async function relayOrigin(env: Env, transactionHash: string) {
+  const source = await env.WALLET_DB.prepare(
+    'SELECT source_network FROM stellar_relays WHERE relayed_hash = ?',
+  )
+    .bind(transactionHash)
+    .first<string>('source_network');
+  return source && Object.hasOwn(walletNetworks, source)
+    ? walletNetworks[source as keyof typeof walletNetworks].chain.name
+    : null;
+}
+
+/**
+ * Members' Stellar addresses among `addresses`, each with the member's EVM address. D1 binds at
+ * most 100 parameters per statement.
+ */
+async function stellarMembers(env: Env, addresses: string[]) {
   const unique = [...new Set(addresses)];
-  const members = new Set<string>();
+  const members = new Map<string, string>();
   for (let i = 0; i < unique.length; i += 99) {
     const batch = unique.slice(i, i + 99);
     const { results } = await env.WALLET_DB.prepare(
-      `SELECT address FROM stellar_accounts WHERE network = ? AND address IN (${batch.map(() => '?').join(',')})`,
+      `SELECT stellar_address, address FROM members
+       WHERE stellar_address IN (${batch.map(() => '?').join(',')})`,
     )
-      .bind(stellar.id, ...batch)
-      .all<{ address: string }>();
-    for (const row of results) members.add(row.address);
+      .bind(...batch)
+      .all<{ stellar_address: string; address: string }>();
+    for (const row of results) members.set(row.stellar_address, row.address);
   }
   return members;
 }

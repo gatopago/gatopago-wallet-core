@@ -8,6 +8,8 @@ export interface Member {
   readonly username: string | null;
   readonly displayName: string | null;
   readonly socialUrl: string | null;
+  /** Only wallet sessions issued in this generation count (`issueSession`). */
+  readonly sessionGeneration: number;
 }
 
 interface MemberRow {
@@ -17,6 +19,7 @@ interface MemberRow {
   username: string | null;
   display_name: string | null;
   social_url: string | null;
+  session_generation: number;
 }
 
 const member = (row: MemberRow): Member => ({
@@ -26,9 +29,11 @@ const member = (row: MemberRow): Member => ({
   username: row.username,
   displayName: row.display_name,
   socialUrl: row.social_url,
+  sessionGeneration: row.session_generation,
 });
 
-const COLUMNS = 'id, address, initial_owners, username, display_name, social_url';
+const COLUMNS =
+  'id, address, initial_owners, username, display_name, social_url, session_generation';
 
 export async function memberByAddress(db: D1Database, address: Address): Promise<Member | null> {
   const row = await db

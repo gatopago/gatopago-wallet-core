@@ -15,6 +15,8 @@ export default defineConfig({
         compatibilityDate: '2026-08-22',
         bindings: {
           WALLET_NETWORKS: 'eip155:421614',
+          // Production may open sign-up; the tests start from invitations required.
+          INVITE_ONLY: 'on',
           // The reconciliation reads the fork, not the public RPCs wrangler.jsonc names.
           INDEX_SOURCES: '{}',
           WALLET_RPC_URLS: JSON.stringify({ 'eip155:421614': FORK_RPC }),

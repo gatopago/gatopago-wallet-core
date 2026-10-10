@@ -15,10 +15,11 @@ import { bundle } from './bundler';
 import { addContact, issueInvite, readContacts, readInvites, removeContact } from './contacts';
 import { readCardInterest, saveCardInterest } from './card';
 import { config, type Config } from './config';
+import { deleteGroup, readGroups, saveGroup } from './groups';
 import { HttpError, json, withCors } from './http';
+import { sendNotifications } from './notifications';
 import { sponsor } from './paymaster';
-import { readProfile, readRecipient, updateProfile } from './profile';
-import { addVaultKey, readVault, saveVaultRecord } from './vault';
+import { readProfile, readRecipient, readSession, updateProfile } from './profile';
 import {
   addStellarKey,
   createStellarAccount,
@@ -42,6 +43,7 @@ function route(request: Request, env: Env, settings: Config): Promise<Response> 
   switch (`${request.method} ${name}`) {
     case 'GET auth':
       if (id === 'signup') return Promise.resolve(readSignup(settings));
+      if (id === 'session') return readSession(request, env, settings);
       break;
     case 'POST auth':
       if (id === 'nonce') return createNonce(request, env);
@@ -98,6 +100,15 @@ function route(request: Request, env: Env, settings: Config): Promise<Response> 
     case 'PUT card-interest':
       if (!id) return saveCardInterest(request, env, settings);
       break;
+    case 'GET groups':
+      if (!id) return readGroups(request, env, settings);
+      break;
+    case 'PUT groups':
+      if (!id) return saveGroup(request, env, settings);
+      break;
+    case 'DELETE groups':
+      if (id) return deleteGroup(request, env, settings, decodeURIComponent(id));
+      break;
     case 'GET recipients':
       if (id) return readRecipient(request, env, id);
       break;
@@ -123,13 +134,6 @@ function route(request: Request, env: Env, settings: Config): Promise<Response> 
       if (id === 'submit') return submitStellar(request, env, settings);
       if (id === 'relays') return requestStellarRelay(request, env, settings);
       if (id === 'keys') return addStellarKey(request, env, settings);
-      break;
-    case 'GET vault':
-      if (!id) return readVault(request, env, settings);
-      break;
-    case 'PUT vault':
-      if (id === 'keys') return addVaultKey(request, env, settings);
-      if (id === 'records') return saveVaultRecord(request, env, settings);
       break;
   }
   throw new HttpError(404, 'NOT_FOUND');
@@ -177,16 +181,18 @@ export default {
     // External requests are capped per run (`SUBREQUESTS_PER_RUN`); jobs resume where they stopped.
     const settings = config(env);
     const budget = new Budget(settings.subrequestsPerRun);
+    // One failing job does not hold back the others; what they stored is notified last, with the
+    // requests left (and the next run sends what does not fit).
+    const run = (job: Promise<void>) => job.catch((error: unknown) => console.error(error));
     if (controller.cron === '* * * * *') {
-      // One failing job does not hold back the other.
-      await watchMembers(env, settings, budget).catch((error: unknown) => console.error(error));
-      return syncStellar(env, settings, budget);
+      await run(watchMembers(env, settings, budget));
+      await run(syncStellar(env, settings, budget));
+      return sendNotifications(env, settings, budget);
     }
     if (controller.cron === '*/10 * * * *') {
-      await reconcileTransfers(env, settings, budget);
-      return readMemberHistories(env, settings, budget).catch((error: unknown) =>
-        console.error(error),
-      );
+      await run(reconcileTransfers(env, settings, budget));
+      await run(readMemberHistories(env, settings, budget));
+      return sendNotifications(env, settings, budget);
     }
     const now = Math.floor(Date.now() / 1000);
     await env.WALLET_DB.batch([

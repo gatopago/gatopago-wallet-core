@@ -14,7 +14,7 @@ import {
 } from '@gatopago/shared/wallet';
 import type { Config, Network } from './config';
 import { enabledNetwork, HttpError, json, readJson } from './http';
-import { authenticate } from './session';
+import { signedInMember } from './profile';
 
 /** Ceiling on the gas a single sponsored operation may declare (deployment and batches fit). */
 const MAX_SPONSORED_GAS = 3_000_000n;
@@ -40,7 +40,7 @@ export async function sponsor(
   networkId: string,
 ): Promise<Response> {
   const network = enabledNetwork(config, networkId);
-  const session = await authenticate(request, config);
+  const member = await signedInMember(request, env, config);
   const body = await readJson<{ id?: unknown; method?: string; params?: unknown[] }>(request);
   const [rpcOperation, entryPoint, chainId] = body.params ?? [];
   if (
@@ -50,7 +50,7 @@ export async function sponsor(
   )
     throw new HttpError(400, 'INVALID_REQUEST');
   const operation = formatUserOperation(rpcOperation as RpcUserOperation) as UserOperation<'0.9'>;
-  if (!isAddressEqual(operation.sender, session.address))
+  if (!isAddressEqual(operation.sender, member.address))
     throw new HttpError(403, 'NOT_ACCOUNT_OWNER');
   const reply = (result: object) => json({ jsonrpc: '2.0', id: body.id ?? null, result });
 
@@ -62,7 +62,7 @@ export async function sponsor(
   if (body.method !== 'pm_getPaymasterData') throw new HttpError(400, 'METHOD_NOT_SUPPORTED');
 
   await assertReasonableGas(operation, network);
-  await consumeDailyBudget(env, config, session.address);
+  await consumeDailyBudget(env, config, member.address);
   const validUntil = Math.floor(Date.now() / 1000) + SPONSORSHIP_SECONDS;
   const signature = await config.sponsor.signTypedData(
     sponsorshipTypedData({

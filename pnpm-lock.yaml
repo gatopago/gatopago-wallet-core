@@ -17,8 +17,8 @@ importers:
   .:
     dependencies:
       '@gatopago/shared':
-        specifier: file:vendor/gatopago-shared-6.13.0.tgz
-        version: file:vendor/gatopago-shared-6.13.0.tgz(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)(typescript@6.0.3)(zod@4.4.3)
+        specifier: file:vendor/gatopago-shared-6.21.0.tgz
+        version: file:vendor/gatopago-shared-6.21.0.tgz(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)(typescript@6.0.3)(zod@4.4.3)
       '@stellar/stellar-sdk':
         specifier: 17.2.0
         version: 17.2.0(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)
@@ -362,9 +362,9 @@ packages:
       '@noble/hashes':
         optional: true
 
-  '@gatopago/shared@file:vendor/gatopago-shared-6.13.0.tgz':
-    resolution: {integrity: sha512-W0LifAYnru/OoBepC+LLs4ZX/RfufMBM3T0qU7wIkbjXKeXvCJeZmEgyFOA1tte4rgrbqM8A94yPhuRt8PrWKA==, tarball: file:vendor/gatopago-shared-6.13.0.tgz}
-    version: 6.13.0
+  '@gatopago/shared@file:vendor/gatopago-shared-6.21.0.tgz':
+    resolution: {integrity: sha512-LTyS1U0au8dTUjO0LRCA4h0dQY7QV+sC8JLskY4PihQKy3XlFnXnpR2G0DenVvI8doneIZzgAC15/PeLnokebA==, tarball: file:vendor/gatopago-shared-6.21.0.tgz}
+    version: 6.21.0
     engines: {node: '>=24'}
     peerDependencies:
       '@category-labs/mera': 0.2.0
@@ -2017,7 +2017,7 @@ snapshots:
     optionalDependencies:
       '@noble/hashes': 2.4.0
 
-  '@gatopago/shared@file:vendor/gatopago-shared-6.13.0.tgz(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)(typescript@6.0.3)(zod@4.4.3)':
+  '@gatopago/shared@file:vendor/gatopago-shared-6.21.0.tgz(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)(typescript@6.0.3)(zod@4.4.3)':
     dependencies:
       '@scure/bip32': 1.7.0
       '@scure/bip39': 1.6.0

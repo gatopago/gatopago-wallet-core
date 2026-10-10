@@ -17,7 +17,7 @@
     "SPONSORED_OPERATIONS_PER_DAY": "50",
     // "on": new accounts need an invitation. "off": anyone who passes Turnstile can join (judges,
     // open betas); invitations still count when used. Existing members are never affected.
-    "INVITE_ONLY": "on",
+    "INVITE_ONLY": "off",
     // External requests per cron run: Workers Free allows 50 per invocation (Paid: 1000).
     "SUBREQUESTS_PER_RUN": "45",
     // Stellar network of members' Stellar accounts; Stellar stays off until STELLAR_SECRET_KEY is set.

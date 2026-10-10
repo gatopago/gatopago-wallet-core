@@ -2,17 +2,19 @@ import {
   getAddress,
   isAddressEqual,
   parseAbiItem,
+  parseEventLogs,
   zeroAddress,
   type Address,
   type Hex,
 } from 'viem';
+import { stellarNetworks, walletNetworks } from '@gatopago/shared/networks';
 import { swapPools } from '@gatopago/shared/swap';
 import type { Budget } from './budget';
 import type { Config, Network } from './config';
 import { HttpError, json } from './http';
 import { hypersyncHeight, hypersyncTransfers, NATIVE_LOG_INDEX } from './hypersync';
 import { signedInMember } from './profile';
-import { notifyReceived } from './push';
+import { NOTIFY_SECONDS } from './push';
 
 export { NATIVE_LOG_INDEX };
 
@@ -37,9 +39,7 @@ export interface Transfer {
 }
 
 /** The coins Wallet Core indexes on `network`: USDC and its configured tokens. */
-export function networkCoins(
-  network: Network,
-): { address: Address; symbol: string; decimals: number }[] {
+function networkCoins(network: Network): { address: Address; symbol: string; decimals: number }[] {
   return [
     { address: network.usdc, symbol: 'USDC', decimals: 6 },
     ...(network.tokens ?? []).map(({ address, symbol, decimals }) => ({
@@ -48,6 +48,13 @@ export function networkCoins(
       decimals,
     })),
   ];
+}
+
+/** The coin stored as `symbol` (`transfers.token`), with its address: `null` for the native coin. */
+export function coinBySymbol(network: Network, symbol: string) {
+  if (symbol === network.chain.nativeCurrency.symbol)
+    return { address: null, ...network.chain.nativeCurrency };
+  return networkCoins(network).find((coin) => coin.symbol === symbol) ?? null;
 }
 
 /** The coin a transfer moved: a configured token, the native coin (`null`), or null for any other. */
@@ -61,6 +68,11 @@ export const coinOf = (
 
 /** Ranges read per network and run, so a run stays within the Worker's subrequest budget. */
 const ROUNDS = 20;
+/**
+ * Blocks behind the latest that HyperSync reads are kept for later: Arbitrum, Avalanche and Monad
+ * finalize in seconds, so past these a block no longer changes, and a reorg never reaches the table.
+ */
+const FINALITY_BLOCKS = 64n;
 /** Addresses per `eth_getLogs` topic filter. */
 const ADDRESSES_PER_QUERY = 100;
 const PAGE = 50;
@@ -84,7 +96,7 @@ function kind(network: Network, { from, to }: Transfer) {
 }
 
 /** Members among `addresses` (lowercase). D1 binds at most 100 parameters per statement. */
-export async function membersAmong(env: Env, addresses: Iterable<string>): Promise<Set<string>> {
+async function membersAmong(env: Env, addresses: Iterable<string>): Promise<Set<string>> {
   const unique = [...new Set(addresses)];
   const members = new Set<string>();
   for (let i = 0; i < unique.length; i += 100) {
@@ -102,7 +114,8 @@ export async function membersAmong(env: Env, addresses: Iterable<string>): Promi
 /**
  * The transfers involving a member, and the statements that keep them (one each, in order). Rows
  * are keyed by their log, so storing a transfer twice, from a webhook and from the reconciliation,
- * changes nothing.
+ * changes nothing. A recent one a member received is stored with its notification pending
+ * (`sendNotifications`).
  */
 export async function storeTransfers(
   env: Env,
@@ -131,11 +144,12 @@ export async function storeTransfers(
   if (budget && !budget.take(blocks.size)) return null;
   for (const block of blocks)
     times.set(block, Number((await network.client.getBlock({ blockNumber: block })).timestamp));
+  const now = Math.floor(Date.now() / 1000);
   const statements = kept.map((transfer) =>
     env.WALLET_DB.prepare(
       `INSERT OR IGNORE INTO transfers (network, transaction_hash, log_index, block_number,
-         timestamp, from_address, to_address, amount, kind, token)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         timestamp, from_address, to_address, amount, kind, token, notify_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).bind(
       network.id,
       transfer.transactionHash,
@@ -147,6 +161,10 @@ export async function storeTransfers(
       transfer.value.toString(),
       kind(network, transfer),
       coinOf(network, transfer.token)?.symbol ?? 'USDC',
+      members.has(transfer.to.toLowerCase()) &&
+        times.get(transfer.blockNumber)! >= now - NOTIFY_SECONDS
+        ? now
+        : null,
     ),
   );
   return { kept, statements, times };
@@ -157,36 +175,47 @@ export async function storeTransfers(
  * webhook did not deliver. Only members' addresses are queried, so results stay small.
  */
 export async function reconcileTransfers(env: Env, config: Config, budget: Budget): Promise<void> {
-  const { results } = await env.WALLET_DB.prepare('SELECT address FROM members').all<{
-    address: Address;
-  }>();
+  // In the order they joined, so a group is the same members from one run to the next.
+  const { results } = await env.WALLET_DB.prepare(
+    'SELECT address FROM members ORDER BY joined_at, address',
+  ).all<{ address: Address }>();
   const groups: Address[][] = [];
   for (let i = 0; i < results.length; i += ADDRESSES_PER_QUERY)
     groups.push(results.slice(i, i + ADDRESSES_PER_QUERY).map((row) => row.address));
   for (const network of config.networks.values()) {
     if (network.index.hypersync) {
-      const read = await reconcileWithHypersync(env, config, network, results, budget).catch(
-        (error: unknown) => {
-          // HyperSync failed: this network is read from its RPC, as without it.
-          console.error(error);
-          return false;
-        },
+      // HyperSync also finds native-coin deposits, which leave no log: reading only the RPC's logs
+      // would move the cursor past them. If it fails, the blocks wait for its next run (the
+      // webhook still delivers in real time).
+      await reconcileWithHypersync(env, network, results, budget).catch((error: unknown) =>
+        console.error(error),
       );
-      if (read) continue;
+      continue;
     }
     if (!budget.take()) return;
     const { client, range, start } = network.index;
     const latest = await client.getBlockNumber();
-    const cursor = await env.WALLET_DB.prepare('SELECT block FROM index_cursors WHERE network = ?')
-      .bind(network.id)
-      .first<number>('block');
-    let from = cursor === null ? (start ?? latest) : BigInt(cursor) + 1n;
+    const cursor = await cursorOf(env, network);
+    let from = cursor === null ? (start ?? latest) : cursor + 1n;
+    if (groups.length === 0) {
+      if (from <= latest) await saveCursor(env, network, latest).run();
+      continue;
+    }
+    // A run that ran out of requests in the middle of a range left where it was in it: the next
+    // group to read and the range's last block, so the range is finished exactly as it started.
+    const partial = await readProgress(env, `range:${network.id}`);
+    let group = partial === null ? 0 : Number(await readProgress(env, `group:${network.id}`));
     for (let round = 0; from <= latest && round < ROUNDS; round++) {
-      if (!budget.take(groups.length * 2)) return;
-      const to = from + range - 1n < latest ? from + range - 1n : latest;
-      const logs = [];
-      for (const group of groups)
-        for (const args of [{ from: group }, { to: group }])
+      const to =
+        partial !== null && round === 0
+          ? partial
+          : from + range - 1n < latest
+            ? from + range - 1n
+            : latest;
+      for (; group < groups.length; group++) {
+        if (!budget.take(2)) return;
+        const logs = [];
+        for (const args of [{ from: groups[group] }, { to: groups[group] }])
           logs.push(
             ...(await client.getLogs({
               address: networkCoins(network).map((coin) => coin.address),
@@ -196,56 +225,75 @@ export async function reconcileTransfers(env: Env, config: Config, budget: Budge
               toBlock: to,
             })),
           );
-      const stored = await storeTransfers(
-        env,
-        network,
-        logs.map((log) => ({
-          transactionHash: log.transactionHash,
-          logIndex: log.logIndex,
-          blockNumber: log.blockNumber,
-          token: log.address,
-          from: log.args.from!,
-          to: log.args.to!,
-          value: log.args.value!,
-        })),
-        budget,
-      );
-      // Out of requests: this range is read again on the next run.
-      if (!stored) return;
-      const results = await env.WALLET_DB.batch([
-        ...stored.statements,
-        saveCursor(env, network, to),
-      ]);
-      await notifyFound(env, config, network, stored, results);
+        const stored = await storeTransfers(
+          env,
+          network,
+          logs.map((log) => ({
+            transactionHash: log.transactionHash,
+            logIndex: log.logIndex,
+            blockNumber: log.blockNumber,
+            token: log.address,
+            from: log.args.from!,
+            to: log.args.to!,
+            value: log.args.value!,
+          })),
+          budget,
+        );
+        // Out of requests: this group is read again on the next run.
+        if (!stored) return;
+        const done = group + 1 === groups.length;
+        await env.WALLET_DB.batch([
+          ...stored.statements,
+          // Once every group read the range, the cursor moves past it.
+          ...(done
+            ? [saveCursor(env, network, to), clearProgress(env, network)]
+            : saveProgress(env, network, group + 1, to)),
+        ]);
+      }
+      group = 0;
       from = to + 1n;
     }
   }
 }
 
-/** How recent a transfer the reconciliation finds must be to be notified: older ones are history. */
-const NOTIFY_SECONDS = 3_600;
+const messageReceived = parseAbiItem(
+  'event MessageReceived(address indexed caller, uint32 sourceDomain, bytes32 indexed nonce, bytes32 sender, uint32 indexed finalityThresholdExecuted, bytes messageBody)',
+);
+
+/** The name of the network with CCTP domain `domain`, among those GatoPago knows. */
+function cctpNetworkName(domain: number): string | null {
+  for (const network of Object.values(walletNetworks))
+    if (network.cctp.domain === domain) return network.chain.name;
+  for (const network of Object.values(stellarNetworks))
+    if (network.cctp.domain === domain) return network.name;
+  return null;
+}
 
 /**
- * Notifies the recent transfers the reconciliation stored for the first time: those a webhook
- * missed. One already stored by a webhook was notified then.
+ * Transfers ready to notify: with their coin and, for USDC that arrived from another network (a
+ * CCTP mint, which comes from no one), where it came from: the source domain of the message
+ * Circle's MessageTransmitter received in the same transaction. One request per such arrival.
  */
-async function notifyFound(
-  env: Env,
-  config: Config,
-  network: Network,
-  stored: NonNullable<Awaited<ReturnType<typeof storeTransfers>>>,
-  results: D1Result[],
-) {
-  const since = Math.floor(Date.now() / 1000) - NOTIFY_SECONDS;
-  const found = stored.kept.filter(
-    (transfer, i) =>
-      results[i].meta.changes > 0 && stored.times.get(transfer.blockNumber)! >= since,
+export async function notices(network: Network, transfers: readonly Transfer[], budget?: Budget) {
+  return Promise.all(
+    transfers.map(async (transfer) => {
+      const coin = coinOf(network, transfer.token) ?? undefined;
+      const minted =
+        transfer.token !== null &&
+        isAddressEqual(transfer.token, network.usdc) &&
+        isAddressEqual(transfer.from, zeroAddress);
+      if (!minted) return { ...transfer, coin };
+      if (budget && !budget.take()) return { ...transfer, coin, origin: null };
+      const receipt = await network.client
+        .getTransactionReceipt({ hash: transfer.transactionHash })
+        .catch(() => null);
+      if (!receipt) return { ...transfer, coin, origin: null };
+      const [message] = parseEventLogs({ abi: [messageReceived], logs: receipt.logs });
+      // A USDC mint that no CCTP message brought: an ordinary receipt.
+      if (!message) return { ...transfer, coin };
+      return { ...transfer, coin, origin: cctpNetworkName(message.args.sourceDomain) };
+    }),
   );
-  await notifyReceived(
-    env,
-    config,
-    found.map((transfer) => ({ ...transfer, coin: coinOf(network, transfer.token) ?? undefined })),
-  ).catch((error: unknown) => console.error(error));
 }
 
 /** The block the reconciliation of `network` read last, or null before its first run. */
@@ -255,6 +303,31 @@ async function cursorOf(env: Env, network: Network) {
     .first<number>('block');
   return block === null ? null : BigInt(block);
 }
+
+const readProgress = async (env: Env, key: string) => {
+  const value = await env.WALLET_DB.prepare('SELECT block FROM index_cursors WHERE network = ?')
+    .bind(key)
+    .first<number>('block');
+  return value === null ? null : BigInt(value);
+};
+
+/** Mid-range progress of the RPC reconciliation: the next member group, and the range's end. */
+const saveProgress = (env: Env, network: Network, group: number, to: bigint) =>
+  [
+    [`group:${network.id}`, BigInt(group)],
+    [`range:${network.id}`, to],
+  ].map(([key, value]) =>
+    env.WALLET_DB.prepare(
+      `INSERT INTO index_cursors (network, block) VALUES (?, ?)
+       ON CONFLICT (network) DO UPDATE SET block = excluded.block`,
+    ).bind(key, Number(value)),
+  );
+
+const clearProgress = (env: Env, network: Network) =>
+  env.WALLET_DB.prepare('DELETE FROM index_cursors WHERE network IN (?, ?)').bind(
+    `group:${network.id}`,
+    `range:${network.id}`,
+  );
 
 const saveCursor = (env: Env, network: Network, block: bigint) =>
   env.WALLET_DB.prepare(
@@ -269,7 +342,6 @@ const saveCursor = (env: Env, network: Network, block: bigint) =>
  */
 async function reconcileWithHypersync(
   env: Env,
-  config: Config,
   network: Network,
   members: readonly { address: Address }[],
   budget: Budget,
@@ -292,14 +364,21 @@ async function reconcileWithHypersync(
       fromBlock: from,
     });
     if (page.nextBlock <= from) return true;
-    const stored = await storeTransfers(env, network, page.transfers, budget, page.times);
+    // The newest blocks could still be reorganized: they are kept for the next run, once final.
+    const final = page.height === null ? page.nextBlock - 1n : page.height - FINALITY_BLOCKS;
+    const until = page.nextBlock - 1n < final ? page.nextBlock - 1n : final;
+    if (until < from) return true;
+    const stored = await storeTransfers(
+      env,
+      network,
+      page.transfers.filter((transfer) => transfer.blockNumber <= until),
+      budget,
+      page.times,
+    );
     // Out of requests: this range is read again on the next run.
     if (!stored) return true;
-    const results = await env.WALLET_DB.batch([
-      ...stored.statements,
-      saveCursor(env, network, page.nextBlock - 1n),
-    ]);
-    await notifyFound(env, config, network, stored, results);
+    await env.WALLET_DB.batch([...stored.statements, saveCursor(env, network, until)]);
+    if (until < page.nextBlock - 1n) return true;
     from = page.nextBlock;
     if (page.height !== null && from > page.height) return true;
   }
@@ -309,38 +388,62 @@ async function reconcileWithHypersync(
 /**
  * Members' history from before they joined, read once each through HyperSync: what reached their
  * address (a payment that brought them, say) while the reconciliation was already past those blocks.
- * From the factory's deployment (`since`) up to where the reconciliation is; it goes on from there.
+ * On each network, from the factory's deployment (`since`) up to where the reconciliation is, which
+ * goes on from there. Progress is saved per member and network (`history:<network>:<address>` in
+ * `index_cursors`), so running out of requests resumes instead of starting over, and a member is
+ * marked read only once every network got there. Members are taken in random order, so one whose
+ * history is slow to finish does not hold back the others.
  */
 export async function readMemberHistories(env: Env, config: Config, budget: Budget) {
-  const networks = [...config.networks.values()].filter((network) => network.index.hypersync);
+  const networks = [...config.networks.values()].flatMap((network) =>
+    network.index.hypersync ? [{ network, hypersync: network.index.hypersync }] : [],
+  );
   if (networks.length === 0) return;
   const { results } = await env.WALLET_DB.prepare(
-    'SELECT address FROM members WHERE history_read = 0 LIMIT 5',
+    'SELECT address FROM members WHERE history_read = 0 ORDER BY random() LIMIT 5',
   ).all<{ address: Address }>();
   for (const { address } of results) {
-    for (const network of networks) {
-      const cursor = await cursorOf(env, network);
-      if (cursor === null) continue;
-      let from = network.index.hypersync!.since;
-      while (from <= cursor) {
-        // Out of requests: this member is read again, from the start, on the next run.
+    let complete = true;
+    for (const { network, hypersync } of networks) {
+      const target = await cursorOf(env, network);
+      // Not reconciled yet: there is no "where it is" to read up to; this member waits.
+      if (target === null) {
+        complete = false;
+        continue;
+      }
+      const key = `history:${network.id}:${address.toLowerCase()}`;
+      const read = await env.WALLET_DB.prepare('SELECT block FROM index_cursors WHERE network = ?')
+        .bind(key)
+        .first<number>('block');
+      let from = read === null ? hypersync.since : BigInt(read) + 1n;
+      while (from <= target) {
+        // Out of requests: the next run goes on from the last page saved.
         if (!budget.take()) return;
-        const page = await hypersyncTransfers(network.index.hypersync!, {
+        const page = await hypersyncTransfers(hypersync, {
           coins: networkCoins(network).map((coin) => coin.address),
           addresses: [address],
           fromBlock: from,
-          toBlock: cursor + 1n,
+          toBlock: target + 1n,
         });
         const stored = await storeTransfers(env, network, page.transfers, budget, page.times);
         if (!stored) return;
-        if (stored.statements.length > 0) await env.WALLET_DB.batch(stored.statements);
+        // HyperSync's archive is behind the reconciliation: try again on a later run.
         if (page.nextBlock <= from) break;
-        from = page.nextBlock;
+        from = page.nextBlock > target + 1n ? target + 1n : page.nextBlock;
+        await env.WALLET_DB.batch([
+          ...stored.statements,
+          env.WALLET_DB.prepare(
+            `INSERT INTO index_cursors (network, block) VALUES (?, ?)
+             ON CONFLICT (network) DO UPDATE SET block = excluded.block`,
+          ).bind(key, Number(from - 1n)),
+        ]);
       }
+      if (from <= target) complete = false;
     }
-    await env.WALLET_DB.prepare('UPDATE members SET history_read = 1 WHERE address = ?')
-      .bind(address)
-      .run();
+    if (complete)
+      await env.WALLET_DB.prepare('UPDATE members SET history_read = 1 WHERE address = ?')
+        .bind(address)
+        .run();
   }
 }
 
@@ -366,12 +469,10 @@ interface TransferRow {
 export async function readActivity(request: Request, env: Env, config: Config): Promise<Response> {
   const member = await signedInMember(request, env, config);
   const me = member.address.toLowerCase();
-  const { results: stellar } = await env.WALLET_DB.prepare(
-    'SELECT address FROM stellar_accounts WHERE member_address = ?',
-  )
-    .bind(me)
-    .all<{ address: string }>();
-  const mine = [me, ...stellar.map((row) => row.address)];
+  const stellar = await env.WALLET_DB.prepare('SELECT stellar_address FROM members WHERE id = ?')
+    .bind(member.id)
+    .first<string | null>('stellar_address');
+  const mine = stellar ? [me, stellar] : [me];
   const before = new URL(request.url).searchParams.get('before');
   let after: [number, number, number, string] | null = null;
   if (before) {
@@ -379,7 +480,8 @@ export async function readActivity(request: Request, env: Env, config: Config): 
     if (
       !/^\d+$/.test(timestamp) ||
       !/^\d+$/.test(block) ||
-      !/^\d+$/.test(index) ||
+      // A native-coin transfer has no log: its index is -1 (`NATIVE_LOG_INDEX`).
+      !/^(-1|\d+)$/.test(index) ||
       !/^(0x)?[0-9a-f]{64}$/.test(hash)
     )
       throw new HttpError(400, 'INVALID_CURSOR');
@@ -390,8 +492,7 @@ export async function readActivity(request: Request, env: Env, config: Config): 
   const other = `CASE WHEN transfers.from_address IN (${list}) THEN transfers.to_address ELSE transfers.from_address END`;
   const { results } = await env.WALLET_DB.prepare(
     `SELECT transfers.*, members.username, members.display_name FROM transfers
-     LEFT JOIN stellar_accounts ON stellar_accounts.address = ${other}
-     LEFT JOIN members ON members.address = COALESCE(stellar_accounts.member_address, ${other})
+     LEFT JOIN members ON members.address = ${other} OR members.stellar_address = ${other}
      WHERE (transfers.from_address IN (${list}) OR transfers.to_address IN (${list}))
        AND (?${n + 1} IS NULL OR (transfers.timestamp, transfers.block_number, transfers.log_index,
          transfers.transaction_hash) < (?${n + 1}, ?${n + 2}, ?${n + 3}, ?${n + 4}))

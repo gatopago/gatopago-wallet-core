@@ -8,10 +8,10 @@ import {
   type Hex,
 } from 'viem';
 import { coinOf, NATIVE_LOG_INDEX, storeTransfers, transferEvent, type Transfer } from './activity';
-import type { Budget } from './budget';
+import { Budget } from './budget';
 import type { Config } from './config';
-import { HttpError, json } from './http';
-import { notifyReceived } from './push';
+import { HttpError, json, readBody } from './http';
+import { sendNotifications } from './notifications';
 
 interface ActivityEvent {
   webhookId?: string;
@@ -94,8 +94,8 @@ export async function receiveAlchemyWebhook(
   env: Env,
   config: Config,
 ): Promise<Response> {
-  const body = await request.text();
-  if (body.length > 1_000_000) throw new HttpError(413, 'BODY_TOO_LARGE');
+  // Read up to 1 MB and no further: the signature is checked on these same bytes below.
+  const body = await readBody(request, 1_000_000);
   let payload: ActivityEvent;
   try {
     payload = JSON.parse(body);
@@ -149,14 +149,12 @@ export async function receiveAlchemyWebhook(
   const stored = (await storeTransfers(env, network, added))!;
   const statements = [...removed, ...stored.statements];
   if (statements.length === 0) return json({});
-  const results = await env.WALLET_DB.batch(statements);
-  // Webhooks retry and the reconciliation may have stored it first: notify new rows only.
-  const fresh = stored.kept.filter((_, i) => results[removed.length + i].meta.changes > 0);
-  await notifyReceived(
-    env,
-    config,
-    fresh.map((transfer) => ({ ...transfer, coin: coinOf(network, transfer.token) ?? undefined })),
-  ).catch((error: unknown) => console.error(error));
+  // Webhooks retry and the reconciliation may have stored it first: a stored row is not marked
+  // again, so it is notified once.
+  await env.WALLET_DB.batch(statements);
+  await sendNotifications(env, config, new Budget(config.subrequestsPerRun)).catch(
+    (error: unknown) => console.error(error),
+  );
   return json({});
 }
 
