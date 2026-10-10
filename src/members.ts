@@ -10,6 +10,8 @@ export interface Member {
   readonly socialUrl: string | null;
   /** Only wallet sessions issued in this generation count (`issueSession`). */
   readonly sessionGeneration: number;
+  /** Its account on Stellar, once the cron wrote it; null while not, or with Stellar off. */
+  readonly stellarAddress: string | null;
 }
 
 interface MemberRow {
@@ -20,6 +22,7 @@ interface MemberRow {
   display_name: string | null;
   social_url: string | null;
   session_generation: number;
+  stellar_address: string | null;
 }
 
 const member = (row: MemberRow): Member => ({
@@ -30,10 +33,11 @@ const member = (row: MemberRow): Member => ({
   displayName: row.display_name,
   socialUrl: row.social_url,
   sessionGeneration: row.session_generation,
+  stellarAddress: row.stellar_address,
 });
 
 const COLUMNS =
-  'id, address, initial_owners, username, display_name, social_url, session_generation';
+  'id, address, initial_owners, username, display_name, social_url, session_generation, stellar_address';
 
 export async function memberByAddress(db: D1Database, address: Address): Promise<Member | null> {
   const row = await db

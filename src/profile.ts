@@ -36,7 +36,8 @@ const profile = (member: Member) => ({
 
 /**
  * The member of the wallet session in the request. A session issued before an owner of the account
- * was removed (an earlier generation) no longer counts: it may be that owner's.
+ * was removed (an earlier generation) no longer counts: it may be that owner's. Nor does one opened
+ * with a Business key the member removed since.
  */
 export async function signedInMember(
   request: Request,
@@ -47,6 +48,15 @@ export async function signedInMember(
   const session = await authenticate(request, config, { business });
   const member = await memberByAddress(env.WALLET_DB, session.address);
   if (!member || session.generation !== member.sessionGeneration)
+    throw new HttpError(401, 'UNAUTHENTICATED');
+  if (
+    session.key &&
+    !(await env.WALLET_DB.prepare(
+      'SELECT 1 FROM business_keys WHERE public_key = ? AND member_id = ?',
+    )
+      .bind(session.key, member.id)
+      .first())
+  )
     throw new HttpError(401, 'UNAUTHENTICATED');
   return member;
 }
@@ -105,7 +115,10 @@ export async function updateProfile(request: Request, env: Env, config: Config):
   return json(profile((await memberByAddress(env.WALLET_DB, member.address))!));
 }
 
-/** `GET /app/v1/recipients/:username`: who receives a payment to `@username`. */
+/**
+ * `GET /app/v1/recipients/:username`: who receives a payment to `@username`, and where on Stellar
+ * (`stellar_address`, null until the cron writes it or with Stellar off).
+ */
 export async function readRecipient(
   request: Request,
   env: Env,
@@ -119,5 +132,6 @@ export async function readRecipient(
     display_name: member.displayName,
     social_url: member.socialUrl,
     address: member.address,
+    stellar_address: member.stellarAddress,
   });
 }

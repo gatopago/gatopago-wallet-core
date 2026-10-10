@@ -8,8 +8,11 @@ import { Budget } from './budget';
 import {
   approveBusinessLogin,
   collectBusinessLogin,
+  deleteBusinessKey,
   readBusinessApproval,
+  readBusinessKeys,
   requestBusinessLogin,
+  signInWithBusinessKey,
 } from './business';
 import { bundle } from './bundler';
 import { addContact, issueInvite, readContacts, readInvites, removeContact } from './contacts';
@@ -51,6 +54,13 @@ function route(request: Request, env: Env, settings: Config): Promise<Response> 
       break;
     case 'POST business-login':
       if (!id) return requestBusinessLogin(request, env, settings);
+      if (id === 'key') return signInWithBusinessKey(request, env, settings);
+      break;
+    case 'GET business-keys':
+      if (!id) return readBusinessKeys(request, env, settings);
+      break;
+    case 'DELETE business-keys':
+      if (id) return deleteBusinessKey(request, env, settings, id);
       break;
     case 'GET business-login':
       if (id) return collectBusinessLogin(request, env, settings, id);

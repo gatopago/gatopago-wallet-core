@@ -38,11 +38,10 @@ export async function createSession(request: Request, env: Env, config: Config):
   if (typeof body.message !== 'string' || typeof body.signature !== 'string')
     throw new HttpError(400, 'INVALID_REQUEST');
 
+  // The app signs in to the wallet here. GatoPago Business never signs with the account's keys: it
+  // uses its own (`business-login`).
   const message = parseSiweMessage(body.message);
-  // The app signs in to the wallet; GatoPago Business, with the same passkeys, gets a session only
-  // Flow accepts, and only for existing members.
-  const business = !!config.businessOrigin && message.uri === config.businessOrigin;
-  const origin = business ? config.businessOrigin! : config.webOrigin;
+  const origin = config.webOrigin;
   const domain = new URL(origin).host;
   const network = config.networks.get(`eip155:${message.chainId}`);
   if (
@@ -63,7 +62,6 @@ export async function createSession(request: Request, env: Env, config: Config):
     .first();
   if (!nonce) throw new HttpError(401, 'NONCE_INVALID');
   let member = await memberByAddress(env.WALLET_DB, message.address);
-  if (!member && business) throw new HttpError(403, 'ACCOUNT_NOT_FOUND');
   const owners = member
     ? await currentOwners(env, config, member, body.initial_owners)
     : await provenInitialOwners(network.client, message.address, body.initial_owners as Hex[]);
@@ -97,7 +95,7 @@ export async function createSession(request: Request, env: Env, config: Config):
       .run();
     member = await memberByAddress(env.WALLET_DB, message.address);
   }
-  const session = await issueSession(config, member!, business ? 'business' : 'wallet');
+  const session = await issueSession(config, member!);
   return json({
     token: session.token,
     expires_at: session.expiresAt,

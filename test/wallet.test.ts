@@ -35,6 +35,7 @@ import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { createSiweMessage } from 'viem/siwe';
 import { Keypair, nativeToScVal, rpc, Address as StellarAddress, xdr } from '@stellar/stellar-sdk';
 import { stellarNetworks, walletContracts, walletNetworks } from '@gatopago/shared/networks';
+import { businessKey, businessKeyResource, businessSignInMessage } from '@gatopago/shared/passkey';
 import {
   addSignerOperation,
   crosschainToStellarCalls,
@@ -382,40 +383,120 @@ describe('GatoPago Business sign-in', () => {
     expect((await api('auth/session', { token: session.token })).status).toBe(200);
   });
 
-  it('signs in with the same passkey on the console, for members only', async () => {
-    const siweBusiness = async (account: GatoPagoAccount) => {
-      const { nonce } = await (
-        await api('auth/nonce', { method: 'POST', headers: from(account) })
-      ).json<{ nonce: string }>();
-      const message = createSiweMessage({
-        domain: 'business.gatopago.com',
-        uri: 'https://business.gatopago.com',
-        address: account.address,
-        chainId: chain.id,
-        nonce,
-        version: '1',
-        issuedAt: new Date(),
-      });
-      return api('auth/session', {
+  it('binds a Business key with the QR, signs in with it anywhere, and ends its sessions when removed', async () => {
+    const account = await newAccount();
+    const token = await member(account);
+    // The key a passkey derives under the Business salt: the same on every device it syncs to.
+    const prfOutput = crypto.getRandomValues(new Uint8Array(32));
+    // The Stellar SDK takes Node buffers; Uint8Array is what it reads.
+    type Bytes = Parameters<typeof Keypair.fromRawEd25519Seed>[0];
+    const device = Keypair.fromRawEd25519Seed((await businessKey(prfOutput)) as Bytes);
+    const publicKey = bytesToHex(device.rawPublicKey());
+    const nonce = async () =>
+      (
+        await (
+          await api('auth/nonce', { method: 'POST', headers: from(account) })
+        ).json<{
+          nonce: string;
+        }>()
+      ).nonce;
+    const signIn = async (challenge?: string, signer = device) => {
+      challenge ??= await nonce();
+      const message = businessSignInMessage('https://business.gatopago.com', challenge);
+      return api('business-login/key', {
         body: {
-          message,
-          signature: await account.signMessage({ message }),
-          initial_owners: account.initialOwners,
+          public_key: publicKey,
+          nonce: challenge,
+          signature: bytesToHex(signer.sign(message as Bytes)),
         },
         headers: from(account),
       });
     };
-    const stranger = await newAccount();
-    expect(await (await siweBusiness(stranger)).json()).toEqual({
-      error_code: 'ACCOUNT_NOT_FOUND',
+    expect(await (await signIn()).json()).toEqual({ error_code: 'BUSINESS_KEY_UNKNOWN' });
+
+    // The console asks for the QR with its key; the member approves exactly that key in the app.
+    const request = await (
+      await api('business-login', {
+        body: { device: 'Chrome · Windows', public_key: publicKey },
+        headers: from(account),
+      })
+    ).json<{ id: string; secret: string }>();
+    expect(await (await api(`business-approvals/${request.id}`, { token })).json()).toMatchObject({
+      public_key: publicKey,
     });
+    const approve = async (key: Hex) => {
+      const message = createSiweMessage({
+        domain: 'gatopago.com',
+        uri: 'https://gatopago.com',
+        address: account.address,
+        chainId: chain.id,
+        nonce: request.id,
+        version: '1',
+        issuedAt: new Date(),
+        resources: [businessKeyResource(key)],
+      });
+      const signature = await account.signMessage({ message });
+      return (
+        await api(`business-approvals/${request.id}`, { token, body: { message, signature } })
+      ).json();
+    };
+    // A signature that names another key does not bind this one.
+    expect(await approve(`0x${'11'.repeat(32)}`)).toEqual({ error_code: 'INVALID_MESSAGE' });
+    expect(await approve(publicKey)).toEqual({ approved: true });
+    const fromQr = await (
+      await api(`business-login/${request.id}`, { token: request.secret })
+    ).json<{ token: string }>();
+    expect((await api('auth/session', { token: fromQr.token })).status).toBe(200);
+
+    // A second device with the same passkey signs in with the same key, once per challenge.
+    const challenge = await nonce();
+    const answer = await signIn(challenge);
+    expect(answer.status).toBe(200);
+    const { token: session } = await answer.json<{ token: string }>();
+    expect(await (await signIn(challenge)).json()).toEqual({ error_code: 'NONCE_INVALID' });
+    expect(await (await signIn(undefined, Keypair.random())).json()).toEqual({
+      error_code: 'SIGNATURE_INVALID',
+    });
+    await expect(identity(session)).resolves.toMatchObject({ address: account.address });
+    expect((await api('profile', { token: session })).status).toBe(401);
+    expect(await (await api('business-keys', { token })).json()).toMatchObject({
+      keys: [{ public_key: publicKey }],
+    });
+
+    // Removing it in the app ends every session it opened, and it no longer signs in.
+    await api(`business-keys/${publicKey}`, { method: 'DELETE', token });
+    expect((await api('auth/session', { token: session })).status).toBe(401);
+    expect((await api('auth/session', { token: fromQr.token })).status).toBe(401);
+    expect(await (await signIn()).json()).toEqual({ error_code: 'BUSINESS_KEY_UNKNOWN' });
+  });
+
+  it('never signs the console in with the keys of the account', async () => {
     const account = await newAccount();
     await member(account);
-    const { token } = await (await siweBusiness(account)).json<{ token: string }>();
-    await expect(identity(token)).resolves.toMatchObject({
-      userId: expect.stringMatching(/^usr_/),
+    const { nonce } = await (
+      await api('auth/nonce', { method: 'POST', headers: from(account) })
+    ).json<{ nonce: string }>();
+    const message = createSiweMessage({
+      domain: 'business.gatopago.com',
+      uri: 'https://business.gatopago.com',
+      address: account.address,
+      chainId: chain.id,
+      nonce,
+      version: '1',
+      issuedAt: new Date(),
     });
-    expect((await api('profile', { token })).status).toBe(401);
+    expect(
+      await (
+        await api('auth/session', {
+          body: {
+            message,
+            signature: await account.signMessage({ message }),
+            initial_owners: account.initialOwners,
+          },
+          headers: from(account),
+        })
+      ).json(),
+    ).toEqual({ error_code: 'INVALID_MESSAGE' });
     const preflight = await api('business-login', {
       method: 'OPTIONS',
       headers: { Origin: 'https://business.gatopago.com' },
@@ -458,6 +539,19 @@ describe('profile', () => {
       display_name: 'Gato',
       social_url: null,
       address,
+      stellar_address: null,
+    });
+    // Once the cron wrote it, XLM and Stellar USDC can go to @gato_1 too.
+    const stellarAddress = stellarAccountAddress(
+      stellarNetworks['stellar:testnet'],
+      Keypair.random().publicKey(),
+      account.address,
+    );
+    await env.WALLET_DB.prepare('UPDATE members SET stellar_address = ? WHERE username = ?')
+      .bind(stellarAddress, 'gato_1')
+      .run();
+    expect(await (await api('recipients/gato_1')).json()).toMatchObject({
+      stellar_address: stellarAddress,
     });
     expect((await api('recipients/nobody')).status).toBe(404);
   });

@@ -8,6 +8,8 @@ interface Session {
   readonly address: Address;
   /** The member's session generation it was issued in (`Member.sessionGeneration`). */
   readonly generation: number;
+  /** The Business key it was opened with, if any: it ends when that key is removed. */
+  readonly key: string | null;
   readonly expiresAt: number;
 }
 
@@ -16,12 +18,13 @@ const LIFETIME_SECONDS = { wallet: 24 * 3600, business: 12 * 3600 };
 
 /**
  * A `business` session (GatoPago Business, the merchant console) is accepted by Flow and refused
- * by the wallet's own endpoints.
+ * by the wallet's own endpoints. One opened with a Business key carries it (`key`).
  */
 export async function issueSession(
   config: Config,
   member: { id: string; address: string; sessionGeneration?: number },
   scope: 'wallet' | 'business' = 'wallet',
+  key?: string,
 ) {
   const expiresAt = Math.floor(Date.now() / 1000) + LIFETIME_SECONDS[scope];
   // Both scopes carry the member's session generation: removing an owner ends them all.
@@ -29,6 +32,7 @@ export async function issueSession(
     address: member.address,
     generation: member.sessionGeneration ?? 0,
     ...(scope === 'business' && { scope }),
+    ...(key && { key }),
   })
     .setProtectedHeader({ alg: 'ES256' })
     .setIssuer(ISSUER)
@@ -58,6 +62,7 @@ export async function authenticate(
       userId: String(payload.sub),
       address: getAddress(String(payload.address)),
       generation: Number(payload.generation ?? 0),
+      key: typeof payload.key === 'string' ? payload.key : null,
       expiresAt: Number(payload.exp),
     };
   } catch {
