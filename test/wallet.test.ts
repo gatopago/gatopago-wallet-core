@@ -767,9 +767,14 @@ describe('sponsored operations', () => {
     expect((await bundler.waitForUserOperationReceipt({ hash })).success).toBe(true);
     expect(await client.getCode({ address: account.address })).toBeDefined();
 
-    await env.WALLET_DB.prepare('UPDATE sponsorship_usage SET operations = 50 WHERE account = ?')
-      .bind(account.address.toLowerCase())
-      .run();
+    // The day's gas runs out before its operations do, and then its operations.
+    const usage = (set: string) =>
+      env.WALLET_DB.prepare(`UPDATE sponsorship_usage SET ${set} WHERE account = ?`)
+        .bind(account.address.toLowerCase())
+        .run();
+    await usage('gas = 20000000 - 100000');
+    await expect(bundler.sendUserOperation({ calls: [approveNothing] })).rejects.toThrow(/429/);
+    await usage('gas = 0, operations = 50');
     await expect(bundler.sendUserOperation({ calls: [approveNothing] })).rejects.toThrow(/429/);
   });
 

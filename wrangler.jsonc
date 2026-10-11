@@ -15,6 +15,7 @@
     "BUSINESS_ORIGIN": "https://business.gatopago.com",
     "WALLET_NETWORKS": "eip155:421614,eip155:43113,eip155:10143",
     "SPONSORED_OPERATIONS_PER_DAY": "50",
+    "SPONSORED_GAS_PER_DAY": "20000000",
     // "on": new accounts need an invitation. "off": anyone who passes Turnstile can join (judges,
     // open betas); invitations still count when used. Existing members are never affected.
     "INVITE_ONLY": "off",

@@ -12,12 +12,15 @@ import {
   sponsorshipPaymasterData,
   sponsorshipTypedData,
 } from '@gatopago/shared/wallet';
-import type { Config, Network } from './config';
+import { MAX_SPONSORED_GAS, type Config, type Network } from './config';
 import { enabledNetwork, HttpError, json, readJson } from './http';
 import { signedInMember } from './profile';
 
-/** Ceiling on the gas a single sponsored operation may declare (deployment and batches fit). */
-const MAX_SPONSORED_GAS = 3_000_000n;
+/**
+ * Stand-in paymaster data for estimation (ERC-7677): as long as the signed data and with no more
+ * zero bytes, so the `preVerificationGas` estimated with it covers the final calldata.
+ */
+const STUB_PAYMASTER_DATA = sponsorshipPaymasterData(0, 2 ** 48 - 1, `0x${'ff'.repeat(65)}`);
 const paymasterGas = {
   paymasterVerificationGasLimit: gatopagoGasConfig.paymasterVerificationGasLimit,
   paymasterPostOpGasLimit: gatopagoGasConfig.paymasterPostOpGasLimit,
@@ -55,14 +58,10 @@ export async function sponsor(
   const reply = (result: object) => json({ jsonrpc: '2.0', id: body.id ?? null, result });
 
   if (body.method === 'pm_getPaymasterStubData')
-    return reply({
-      ...paymasterFields(sponsorshipPaymasterData(0, 0, `0x${'00'.repeat(65)}`)),
-      isFinal: false,
-    });
+    return reply({ ...paymasterFields(STUB_PAYMASTER_DATA), isFinal: false });
   if (body.method !== 'pm_getPaymasterData') throw new HttpError(400, 'METHOD_NOT_SUPPORTED');
 
-  await assertReasonableGas(operation, network);
-  await consumeDailyBudget(env, config, member.address);
+  await consumeDailyBudget(env, config, member.address, await declaredGas(operation, network));
   const validUntil = Math.floor(Date.now() / 1000) + SPONSORSHIP_SECONDS;
   const signature = await config.sponsor.signTypedData(
     sponsorshipTypedData({
@@ -76,7 +75,8 @@ export async function sponsor(
   return reply(paymasterFields(sponsorshipPaymasterData(0, validUntil, signature)));
 }
 
-async function assertReasonableGas(operation: UserOperation<'0.9'>, network: Network) {
+/** The gas the operation may use (its limits), within the per-operation ceiling and price. */
+async function declaredGas(operation: UserOperation<'0.9'>, network: Network) {
   const gas =
     operation.verificationGasLimit +
     operation.callGasLimit +
@@ -84,20 +84,27 @@ async function assertReasonableGas(operation: UserOperation<'0.9'>, network: Net
     paymasterGas.paymasterVerificationGasLimit +
     paymasterGas.paymasterPostOpGasLimit;
   const price = await network.client.getGasPrice();
-  if (gas > MAX_SPONSORED_GAS || operation.maxFeePerGas > price * 3n)
+  if (gas > BigInt(MAX_SPONSORED_GAS) || operation.maxFeePerGas > price * 3n)
     throw new HttpError(400, 'GAS_NOT_SPONSORED');
+  return Number(gas);
 }
 
-/** Counts one sponsored operation (any network) against the account's daily budget. */
-export async function consumeDailyBudget(env: Env, config: Config, account: Address) {
+/**
+ * Counts one sponsored operation (any network) and the gas it declares (EVM; none on Stellar)
+ * against the account's daily budget.
+ */
+export async function consumeDailyBudget(env: Env, config: Config, account: Address, gas = 0) {
   const result = await env.WALLET_DB.prepare(
-    `INSERT INTO sponsorship_usage (account, day, operations) VALUES (?, ?, 1)
-     ON CONFLICT (account, day) DO UPDATE SET operations = operations + 1 WHERE operations < ?`,
+    `INSERT INTO sponsorship_usage (account, day, operations, gas) VALUES (?1, ?2, 1, ?3)
+     ON CONFLICT (account, day) DO UPDATE SET operations = operations + 1, gas = gas + ?3
+     WHERE operations < ?4 AND gas + ?3 <= ?5`,
   )
     .bind(
       account.toLowerCase(),
       Math.floor(Date.now() / 86_400_000),
+      gas,
       config.sponsoredOperationsPerDay,
+      config.sponsoredGasPerDay,
     )
     .run();
   if (result.meta.changes !== 1) throw new HttpError(429, 'SPONSORSHIP_LIMIT_REACHED');

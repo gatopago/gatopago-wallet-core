@@ -8,6 +8,9 @@ import {
   type WalletNetwork,
 } from '@gatopago/shared/networks';
 
+/** Ceiling on the gas a single sponsored operation may declare (deployment and batches fit). */
+export const MAX_SPONSORED_GAS = 3_000_000;
+
 export interface Network extends WalletNetwork {
   readonly id: string;
   readonly rpcUrl: string;
@@ -44,6 +47,8 @@ export interface Config {
   readonly sessionJwk: JsonWebKey;
   readonly turnstileSecret: string;
   readonly sponsoredOperationsPerDay: number;
+  /** Gas the sponsored EVM operations of an account may declare per day (sum of their limits). */
+  readonly sponsoredGasPerDay: number;
   /** External requests one cron run may make (Workers Free: 50 per invocation). */
   readonly subrequestsPerRun: number;
   /** `INVITE_ONLY`: whether new accounts need an invitation (Turnstile is always required). */
@@ -196,6 +201,9 @@ export function config(env: Env): Config {
   const operations = Number(required(env, 'SPONSORED_OPERATIONS_PER_DAY'));
   if (!Number.isSafeInteger(operations) || operations < 1)
     throw new ConfigError('INVALID_SPONSORED_OPERATIONS_PER_DAY');
+  const gasPerDay = Number(required(env, 'SPONSORED_GAS_PER_DAY'));
+  if (!Number.isSafeInteger(gasPerDay) || gasPerDay < MAX_SPONSORED_GAS)
+    throw new ConfigError('INVALID_SPONSORED_GAS_PER_DAY');
   return {
     environment: required(env, 'GATOPAGO_ENVIRONMENT'),
     webOrigin,
@@ -206,6 +214,7 @@ export function config(env: Env): Config {
     sessionJwk: JSON.parse(required(env, 'SESSION_PRIVATE_JWK')),
     turnstileSecret: required(env, 'TURNSTILE_SECRET_KEY'),
     sponsoredOperationsPerDay: operations,
+    sponsoredGasPerDay: gasPerDay,
     subrequestsPerRun,
     inviteOnly: inviteOnly === 'on',
     alchemyAuthToken: env.ALCHEMY_AUTH_TOKEN || null,
