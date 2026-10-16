@@ -42,6 +42,11 @@ export interface Config {
   /** GatoPago Business (merchant console), or `null` when off. */
   readonly businessOrigin: string | null;
   readonly networks: ReadonlyMap<string, Network>;
+  /**
+   * The home network, listed first in `WALLET_NETWORKS`: account owners and approvals are read
+   * there (the factory and the approvals are the same on every network).
+   */
+  readonly home: Network;
   readonly relayerKey: Hex;
   readonly sponsor: ReturnType<typeof privateKeyToAccount>;
   readonly sessionJwk: JsonWebKey;
@@ -209,6 +214,7 @@ export function config(env: Env): Config {
     webOrigin,
     businessOrigin: env.BUSINESS_ORIGIN ? new URL(env.BUSINESS_ORIGIN).origin : null,
     networks,
+    home: networks.values().next().value!,
     relayerKey: privateKey(env, 'RELAYER_PRIVATE_KEY'),
     sponsor: privateKeyToAccount(privateKey(env, 'SPONSOR_PRIVATE_KEY')),
     sessionJwk: JSON.parse(required(env, 'SESSION_PRIVATE_JWK')),

@@ -38,7 +38,7 @@ export async function addApproval(
   const body = await readJson<{ call?: Hex; signature?: Hex; initial_owners?: Hex[] }>(request);
   if (!isHex(body.call) || !isHex(body.signature)) throw new HttpError(400, 'INVALID_REQUEST');
 
-  const client = [...config.networks.values()][0].client;
+  const { client } = config.home;
   const initialOwners =
     member.initialOwners ?? (await provenInitialOwners(client, account, body.initial_owners));
   const previous = await approvals(env, account);
@@ -134,7 +134,7 @@ export async function currentOwners(
   member: Member,
   claimedInitialOwners: unknown,
 ): Promise<Hex[]> {
-  const client = [...config.networks.values()][0].client;
+  const { client } = config.home;
   const initialOwners =
     member.initialOwners ??
     (await provenInitialOwners(client, member.address, claimedInitialOwners as Hex[] | undefined));

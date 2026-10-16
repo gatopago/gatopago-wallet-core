@@ -56,10 +56,6 @@ export async function memberByUsername(db: D1Database, username: string): Promis
 }
 
 /**
- * Admits `address` with an unused, unexpired invitation, atomically: the batch fails as a whole if
- * the invitation was consumed concurrently (`members.invite_code` is unique).
- */
-/**
  * Admits `address` without an invitation while sign-up is open (`INVITE_ONLY=off`): an invitation
  * issued by `open-signup` and consumed at once records how the member joined.
  */
@@ -73,6 +69,10 @@ export async function admitOpen(db: D1Database, id: string, address: Address): P
   return admit(db, id, address, code);
 }
 
+/**
+ * Admits `address` with an unused, unexpired invitation, atomically: the batch fails as a whole if
+ * the invitation was consumed concurrently (`members.invite_code` is unique).
+ */
 export async function admit(
   db: D1Database,
   id: string,
