@@ -88,6 +88,16 @@ export interface Notice {
 }
 
 /**
+ * The exact amount, as the app shows a movement: every decimal it has, at least two. Never through
+ * `Number`, which rounds a small amount (one stroop, one wei) to zero and a large one past its value.
+ */
+export function amountText(value: bigint, decimals: number, en: boolean) {
+  const [whole, fraction = ''] = formatUnits(value, decimals).split('.');
+  const grouped = new Intl.NumberFormat(en ? 'en' : 'es').format(BigInt(whole));
+  return `${grouped}${en ? '.' : ','}${fraction.padEnd(2, '0')}`;
+}
+
+/**
  * Sends `notice` to every device its receiver enabled. Only the fact and the amount travel: the app
  * reads the details from the chain and the API. `sent` also when nobody is to be told; `retry`
  * when FCM failed for a device; `budget` when the run has no requests left for it.
@@ -111,15 +121,10 @@ export async function deliver(
   const renewing = !accessToken || accessToken.expiresAt <= Math.floor(Date.now() / 1000) + 60;
   // Every device at once or none: a retry sends to all of them again (the tag keeps it one).
   if (!budget.take(results.length + (renewing && results.length > 0 ? 1 : 0))) return 'budget';
-  const amount = Number(formatUnits(notice.value, notice.coin.decimals));
   let outcome: 'sent' | 'retry' = 'sent';
   for (const { token, language, sender } of results) {
     const en = language === 'en';
-    // The exact amount, as the app shows a movement: two to six decimals.
-    const value = `${amount.toLocaleString(en ? 'en' : 'es', {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 6,
-    })} ${notice.coin.symbol}`;
+    const value = `${amountText(notice.value, notice.coin.decimals, en)} ${notice.coin.symbol}`;
     const arrived = notice.origin !== undefined;
     const from = sender ? `@${sender}` : short(notice.from);
     const origin = notice.origin ?? (en ? 'another network' : 'otra red');

@@ -1,6 +1,6 @@
 import type { Hex } from 'viem';
 import { generateSiweNonce, parseSiweMessage } from 'viem/siwe';
-import { messageSigner } from '@gatopago/shared/wallet';
+import { gatopagoAccountAbi, messageSigner } from '@gatopago/shared/wallet';
 import { currentOwners, provenInitialOwners } from './approvals';
 import type { Config } from './config';
 import { HttpError, json, rateLimit, readJson } from './http';
@@ -65,12 +65,23 @@ export async function createSession(request: Request, env: Env, config: Config):
   const owners = member
     ? await currentOwners(env, config, member, body.initial_owners)
     : await provenInitialOwners(network.client, message.address, body.initial_owners as Hex[]);
+  const signer = await messageSigner(network.client, {
+    account: message.address,
+    owners,
+    message: body.message,
+    signature: body.signature,
+  });
+  if (!signer) throw new HttpError(401, 'SIGNATURE_INVALID');
+  // An account Wallet Core does not know is proven by its initial owners. Once deployed, the
+  // network says whether that owner still is one: an owner removed since cannot sign it up again.
   if (
-    !(await messageSigner(network.client, {
-      account: message.address,
-      owners,
-      message: body.message,
-      signature: body.signature,
+    !member &&
+    (await network.client.getCode({ address: message.address })) &&
+    !(await network.client.readContract({
+      address: message.address,
+      abi: gatopagoAccountAbi,
+      functionName: 'isSigner',
+      args: [signer],
     }))
   )
     throw new HttpError(401, 'SIGNATURE_INVALID');

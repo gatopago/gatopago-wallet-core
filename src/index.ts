@@ -5,10 +5,13 @@ import { deletePushToken, savePushToken } from './push';
 import { addApproval, readApprovals } from './approvals';
 import { createNonce, createSession, readSignup } from './auth';
 import { Budget } from './budget';
+import { readersHealth } from './cursors';
 import {
   approveBusinessLogin,
   collectBusinessLogin,
   deleteBusinessKey,
+  deleteBusinessSession,
+  QR_SESSION_SECONDS,
   readBusinessApproval,
   readBusinessKeys,
   requestBusinessLogin,
@@ -61,6 +64,9 @@ function route(request: Request, env: Env, settings: Config): Promise<Response> 
       break;
     case 'DELETE business-keys':
       if (id) return deleteBusinessKey(request, env, settings, id);
+      break;
+    case 'DELETE business-sessions':
+      if (id) return deleteBusinessSession(request, env, settings, id);
       break;
     case 'GET business-login':
       if (id) return collectBusinessLogin(request, env, settings, id);
@@ -154,10 +160,17 @@ export default {
     if (new URL(request.url).pathname === '/app/v1/health') {
       try {
         config(env);
-        return json({ status: 'ok' });
       } catch (error) {
         console.error(error);
         return json({ status: 'misconfigured' }, 503);
+      }
+      // Being up is not enough: each reader tells how far it got, so one that stopped shows here.
+      try {
+        const readers = await readersHealth(env);
+        return json({ status: readers.behind.length > 0 ? 'behind' : 'ok', ...readers });
+      } catch (error) {
+        console.error(error);
+        return json({ status: 'database_unavailable' }, 503);
       }
     }
     let settings: Config;
@@ -200,14 +213,20 @@ export default {
       return sendNotifications(env, settings, budget);
     }
     if (controller.cron === '*/10 * * * *') {
-      await run(reconcileTransfers(env, settings, budget));
+      // The reconciliation takes half at most, so the earlier histories get their turn while it
+      // catches up; what it leaves goes on to them and to the notifications.
+      await run(reconcileTransfers(env, settings, budget.share(2)));
       await run(readMemberHistories(env, settings, budget));
       return sendNotifications(env, settings, budget);
     }
     const now = Math.floor(Date.now() / 1000);
     await env.WALLET_DB.batch([
       env.WALLET_DB.prepare('DELETE FROM siwe_nonces WHERE expires_at <= ?').bind(now),
-      env.WALLET_DB.prepare('DELETE FROM business_logins WHERE expires_at <= ?').bind(now - 3600),
+      // A QR sign-in without a key is its session's record: kept until that session ends.
+      env.WALLET_DB.prepare(
+        `DELETE FROM business_logins WHERE expires_at <= ?
+         AND (collected = 0 OR public_key IS NOT NULL OR expires_at <= ?)`,
+      ).bind(now - 3600, now - QR_SESSION_SECONDS),
       env.WALLET_DB.prepare('DELETE FROM sponsorship_usage WHERE day < ?').bind(
         Math.floor(now / 86_400) - 1,
       ),

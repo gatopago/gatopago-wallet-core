@@ -58,6 +58,15 @@ export async function signedInMember(
       .first())
   )
     throw new HttpError(401, 'UNAUTHENTICATED');
+  if (
+    session.login &&
+    !(await env.WALLET_DB.prepare(
+      'SELECT 1 FROM business_logins WHERE id = ? AND member_id = ? AND collected = 1',
+    )
+      .bind(session.login, member.id)
+      .first())
+  )
+    throw new HttpError(401, 'UNAUTHENTICATED');
   return member;
 }
 

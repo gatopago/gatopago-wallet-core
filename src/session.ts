@@ -10,21 +10,25 @@ interface Session {
   readonly generation: number;
   /** The Business key it was opened with, if any: it ends when that key is removed. */
   readonly key: string | null;
+  /** The QR sign-in that opened it without a key, if so: it ends when that sign-in is removed. */
+  readonly login: string | null;
   readonly expiresAt: number;
 }
 
 const ISSUER = 'gatopago-wallet-core';
-const LIFETIME_SECONDS = { wallet: 24 * 3600, business: 12 * 3600 };
+export const BUSINESS_SESSION_SECONDS = 12 * 3600;
+const LIFETIME_SECONDS = { wallet: 24 * 3600, business: BUSINESS_SESSION_SECONDS };
 
 /**
  * A `business` session (GatoPago Business, the merchant console) is accepted by Flow and refused
- * by the wallet's own endpoints. One opened with a Business key carries it (`key`).
+ * by the wallet's own endpoints. One opened with a Business key carries it (`key`); one opened by a
+ * QR alone carries that sign-in (`login`), so either can be ended from the app.
  */
 export async function issueSession(
   config: Config,
   member: { id: string; address: string; sessionGeneration?: number },
   scope: 'wallet' | 'business' = 'wallet',
-  key?: string,
+  { key, login }: { key?: string; login?: string } = {},
 ) {
   const expiresAt = Math.floor(Date.now() / 1000) + LIFETIME_SECONDS[scope];
   // Both scopes carry the member's session generation: removing an owner ends them all.
@@ -33,6 +37,7 @@ export async function issueSession(
     generation: member.sessionGeneration ?? 0,
     ...(scope === 'business' && { scope }),
     ...(key && { key }),
+    ...(login && { login }),
   })
     .setProtectedHeader({ alg: 'ES256' })
     .setIssuer(ISSUER)
@@ -63,6 +68,7 @@ export async function authenticate(
       address: getAddress(String(payload.address)),
       generation: Number(payload.generation ?? 0),
       key: typeof payload.key === 'string' ? payload.key : null,
+      login: typeof payload.login === 'string' ? payload.login : null,
       expiresAt: Number(payload.exp),
     };
   } catch {

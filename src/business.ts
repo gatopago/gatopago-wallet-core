@@ -13,13 +13,15 @@ import { messageSigner } from '@gatopago/shared/wallet';
 import { currentOwners } from './approvals';
 import type { Config } from './config';
 import { HttpError, json, rateLimit, readJson } from './http';
-import { issueSession } from './session';
+import { BUSINESS_SESSION_SECONDS, issueSession } from './session';
 import { memberByAddress } from './members';
 import { signedInMember } from './profile';
 
 /** How long the console's QR stays valid, and how long after it the console may still collect. */
 const REQUEST_SECONDS = 120;
 const COLLECT_SECONDS = 60;
+/** How long after its QR expires a sign-in without a key may still have a session open. */
+export const QR_SESSION_SECONDS = COLLECT_SECONDS + BUSINESS_SESSION_SECONDS;
 
 /** A Business key: 32-byte Ed25519 public key, in lowercase hex. */
 const PUBLIC_KEY = /^0x[0-9a-f]{64}$/;
@@ -112,7 +114,12 @@ export async function collectBusinessLogin(
   if (!collected) return json({ status: 'expired' });
   const member = await memberByAddress(env.WALLET_DB, login.address as Address);
   if (!member) return json({ status: 'expired' });
-  const session = await issueSession(config, member, 'business', login.public_key ?? undefined);
+  const session = await issueSession(
+    config,
+    member,
+    'business',
+    login.public_key ? { key: login.public_key } : { login: id },
+  );
   return json({
     status: 'approved',
     token: session.token,
@@ -264,20 +271,44 @@ export async function signInWithBusinessKey(
       .run();
     throw new HttpError(404, 'BUSINESS_KEY_UNKNOWN');
   }
-  const session = await issueSession(config, member, 'business', body.public_key);
+  const session = await issueSession(config, member, 'business', { key: body.public_key });
   return json({ token: session.token, expires_at: session.expiresAt, address: member.address });
 }
 
-/** `GET /app/v1/business-keys`, from the app: the keys that sign in to Business, newest first. */
+/**
+ * `GET /app/v1/business-keys`, from the app: the member's accesses to Business, newest first: the
+ * keys that sign in, and the sessions a QR opened without a key (`ends_at` at the latest).
+ */
 export async function readBusinessKeys(request: Request, env: Env, config: Config) {
   const member = await signedInMember(request, env, config);
-  const { results } = await env.WALLET_DB.prepare(
-    `SELECT public_key, owner, created_at FROM business_keys WHERE member_id = ?
-     ORDER BY created_at DESC`,
+  const [keys, sessions] = await env.WALLET_DB.batch([
+    env.WALLET_DB.prepare(
+      `SELECT public_key, owner, created_at FROM business_keys WHERE member_id = ?
+       ORDER BY created_at DESC`,
+    ).bind(member.id),
+    env.WALLET_DB.prepare(
+      `SELECT id, device, place, expires_at + ? AS ends_at FROM business_logins
+       WHERE member_id = ? AND collected = 1 AND public_key IS NULL AND expires_at + ? > ?
+       ORDER BY expires_at DESC`,
+    ).bind(QR_SESSION_SECONDS, member.id, QR_SESSION_SECONDS, now()),
+  ]);
+  return json({ keys: keys.results, sessions: sessions.results });
+}
+
+/** `DELETE /app/v1/business-sessions/:id`, from the app: a session a QR opened without a key ends. */
+export async function deleteBusinessSession(
+  request: Request,
+  env: Env,
+  config: Config,
+  id: string,
+) {
+  const member = await signedInMember(request, env, config);
+  await env.WALLET_DB.prepare(
+    'DELETE FROM business_logins WHERE id = ? AND member_id = ? AND public_key IS NULL',
   )
-    .bind(member.id)
-    .all();
-  return json({ keys: results });
+    .bind(id, member.id)
+    .run();
+  return json({});
 }
 
 /** `DELETE /app/v1/business-keys/:public_key`: the key no longer signs in, and its sessions end. */

@@ -11,7 +11,7 @@ operation with their passkey and send it through any ERC-4337 bundler.
 
 | Route                                                                   |                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `GET /app/v1/health`                                                    | 200 when every setting is valid                                                                                                                                                                                                                                                                                                                                                                                          |
+| `GET /app/v1/health`                                                    | 200 when every setting is valid, with each reader's last block, when it moved and failed, those `behind`, ledgers `missed` and notifications pending                                                                                                                                                                                                                                                                     |
 | `POST /app/v1/auth/nonce`                                               | Nonce for a Sign-In with Ethereum (ERC-4361) message                                                                                                                                                                                                                                                                                                                                                                     |
 | `GET /app/v1/auth/signup`                                               | `{invite_required}`: whether new accounts need an invitation now (`INVITE_ONLY`)                                                                                                                                                                                                                                                                                                                                         |
 | `POST /app/v1/auth/session`                                             | `{message, signature, initial_owners, invite?, turnstile?}`: the account signs the SIWE message (ERC-1271, or ERC-6492 before deployment), and the signer must be an owner now by the approvals Wallet Core verified, whatever a network still behind a removal accepts; returns an ES256 session token carrying the member's session generation. New accounts need Turnstile and, while `INVITE_ONLY=on`, an invitation |
@@ -45,25 +45,32 @@ operation with their passkey and send it through any ERC-4337 bundler.
 `eip155:43113` (Avalanche Fuji), `eip155:10143` (Monad testnet). GatoPago Flow asks Wallet Core
 about every session token it receives (`GET /app/v1/auth/session`, through a service binding).
 
-The D1 database has a single schema (`migrations/0001_schema.sql`): members (profile, invitation
-and Stellar address), invitations, SIWE nonces, approvals, daily sponsorship counters, contacts,
+The D1 database starts from `migrations/0001_schema.sql`, and every change is a new migration (it
+is never reset): members (profile, invitation and Stellar address, and per network the webhook that
+has their address and whether their earlier history was read), invitations, SIWE nonces, approvals, daily sponsorship counters, contacts,
 saved groups, card survey answers, push devices, movements and Stellar's relays, submissions and approved keys. An
 approval that removes an owner moves the member's session generation: wallet sessions carry it, so
 every earlier one stops counting.
 
 Members' movements (`transfers`) are the activity history, a cache of the chain that can be
 rebuilt by reading it again: transfers of USDC and the network's configured tokens, and the native
-coin (ETH, AVAX, MON) sent straight to a member in a transaction of its own (no log: its row has
-`log_index` -1). Native coin moved inside a contract call leaves no trace there and is not listed.
+coin (ETH, AVAX, MON) sent to a member, in a transaction of its own (no log: its row has
+`log_index` -1) or inside one, as a smart account pays (a negative `log_index` from its place in
+the trace). A transfer of nothing is not kept: anyone can make one to place an address in a
+member's history.
 
 - **Alchemy Address Activity webhooks** deliver them as they happen (tokens as logs, the native
-  coin as `external` activity; `POST /app/v1/webhooks/alchemy`,
-  verified with each webhook's signing key; a reorg's `removed` event deletes the row). Configure
-  one webhook per network in `ALCHEMY_WEBHOOKS`; every minute the Worker adds new members'
-  addresses to them with `ALCHEMY_AUTH_TOKEN`. To add a network's webhook later, set
-  `members.watched = 0` so every address is added again.
+  coin as `external` and `internal` activity; `POST /app/v1/webhooks/alchemy`,
+  verified with each webhook's signing key; a reorg's `removed` event deletes the row). Alchemy
+  reports `internal` transfers on Arbitrum and Avalanche, not on Monad, and only the webhook reads
+  them: native coin a smart account pays on Monad, or that a missed webhook carried, is not listed.
+  Configure one webhook per network in `ALCHEMY_WEBHOOKS`; every minute the Worker adds members'
+  addresses to them with `ALCHEMY_AUTH_TOKEN`: new members, and all of them when a webhook is
+  replaced or a network added (`member_networks.webhook`).
 - **Reconciliation**, every 10 minutes, reads the members' Transfer events that a webhook missed,
-  querying only their addresses, and notifies those from the last hour. `INDEX_SOURCES` sets per network the RPC it reads (Alchemy's free
+  querying only their addresses, and notifies those from the last hour. It takes half of the run's
+  requests at most, each network an even part, and a network that fails leaves its blocks for the
+  next run without stopping the others. `INDEX_SOURCES` sets per network the RPC it reads (Alchemy's free
   tier allows only 10 blocks per `eth_getLogs`, so a public RPC can serve here), the blocks per
   query (default 100) and the first block on a network not read yet (default: the latest), e.g.
   `{"eip155:421614": {"url": "https://sepolia-rollup.arbitrum.io/rpc", "range": 10000, "start": 123}}`.
@@ -72,9 +79,11 @@ coin (ETH, AVAX, MON) sent straight to a member in a transaction of its own (no 
   as many blocks as it answers, with each block's time, where `eth_getLogs` needs two requests per
   hundred members, a short range and one more request per block. The same request finds the native
   coin sent to members (transactions to them that moved value and succeeded), which the RPC path
-  cannot. If it fails, that run reads the RPC. It also reads, once per member, their transfers from the factory's deployment (`since`) up
-  to where the reconciliation is: a payment that reached their address before they joined, which
-  the reconciliation had already passed (`members.history_read`).
+  cannot. If it fails, the blocks wait for its next run: the RPC does not stand in, or the cursor
+  would move past those deposits. It also reads, once per member and network, their transfers from
+  the factory's deployment (`since`) up to where the reconciliation is: a payment that reached their
+  address before they joined, which the reconciliation had already passed
+  (`member_networks.history_read`, so a network added later is read for everyone).
 
 Stellar is optional (`STELLAR_SECRET_KEY`; see `@gatopago/shared/stellar`). Its key creates each
 member's Stellar account (the address derives from it and the EVM account, so it receives before
@@ -88,7 +97,9 @@ new members' Stellar addresses (`members.stellar_address`), finds burns toward t
 TokenMessenger's `DepositForBurn` events, through HyperSync or `eth_getLogs`, cursor
 `stellar-burns:<network>`), wakes the relayer for older ones and reads the USDC and XLM transfer
 events since the last ledger into `transfers`, with USDC in 6 decimals like every network,
-notifying what members received. Each call it sends is
+notifying what members received. After a stop it catches up from its cursor, a few windows per run,
+as far back as the RPC keeps events (about a week on the public one); ledgers it no longer keeps
+are recorded as missed (`missed:<network>` in `index_cursors`, shown by the health check). Each call it sends is
 remembered by its authorization nonces (`stellar_submissions`, 30 days): the network forgets a
 nonce when its five-minute signature expires, so this is how a lost answer is never paid twice.
 Without the key the routes answer 404 and nothing runs; history and funds stay on Stellar.
@@ -107,13 +118,15 @@ pnpm db:migrate
 
 Plain settings live in `wrangler.jsonc` (`vars`); secrets are set with
 `pnpm wrangler secret put <NAME>` (or `… < file` for a file) and listed in `.dev.vars.example`.
-`/app/v1/health` answers 503 while any required one is missing or invalid.
+`/app/v1/health` answers 503 while any required one is missing or invalid. Being up is not
+enough: it also says which readers are `behind` (they failed since they last moved, or have not
+moved in half an hour).
 
 | Name                           | Kind             | What it is                                                                                                                                                                                                      | How to get it                                                                                                                                                                                                              |
 | ------------------------------ | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `GATOPAGO_ENVIRONMENT`         | var              | Deployment name (`production`); sessions are bound to it                                                                                                                                                        | Fixed per deployment                                                                                                                                                                                                       |
 | `WEB_ORIGIN`                   | var              | The web app's origin: the only one CORS allows and SIWE messages name                                                                                                                                           | `https://gatopago.com`                                                                                                                                                                                                     |
-| `WALLET_NETWORKS`              | var              | CAIP-2 ids of the networks accounts use                                                                                                                                                                         | Networks with GatoPago's contracts (`protocol/deployments`)                                                                                                                                                                |
+| `WALLET_NETWORKS`              | var              | CAIP-2 ids of the networks accounts use, the home network first (owners are read there)                                                                                                                         | Networks with GatoPago's contracts (`protocol/deployments`)                                                                                                                                                                |
 | `SPONSORED_OPERATIONS_PER_DAY` | var              | Sponsored operations per account and day                                                                                                                                                                        | Policy; `50` today                                                                                                                                                                                                         |
 | `SPONSORED_GAS_PER_DAY`        | var              | Gas an account's sponsored EVM operations may declare per day (their limits added up), at least the 3,000,000 one operation may declare                                                                         | Policy; `20000000` today (about 50 ordinary operations)                                                                                                                                                                    |
 | `SUBREQUESTS_PER_RUN`          | var              | External requests one cron run may make; jobs stop there and resume from their cursors on the next run                                                                                                          | Workers Free allows 50 per invocation: `45`. Workers Paid: up to `1000`                                                                                                                                                    |

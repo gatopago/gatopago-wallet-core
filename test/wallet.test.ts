@@ -59,6 +59,8 @@ import {
 import worker from '../src/index';
 import { authenticate } from '../src/session';
 import { coinOf, notices, readMemberHistories, reconcileTransfers } from '../src/activity';
+import { amountText } from '../src/push';
+import { watchMembers } from '../src/alchemy';
 import { Budget } from '../src/budget';
 import { config, type Network } from '../src/config';
 import { indexTransfers } from '../src/stellar';
@@ -130,6 +132,17 @@ async function softwarePasskey(): Promise<WebAuthnAccount> {
 
 const newAccount = async () =>
   toGatoPagoAccount({ client, owner: await softwarePasskey(), contracts: walletContracts });
+
+/** Marks the earlier history on Arbitrum Sepolia read for every member but `except`. */
+const historyReadBut = (...except: string[]) =>
+  env.WALLET_DB.prepare(
+    `INSERT INTO member_networks (address, network, history_read)
+     SELECT address, 'eip155:421614', 1 FROM members
+     WHERE address NOT IN (${except.map(() => '?').join(', ')})
+     ON CONFLICT (address, network) DO UPDATE SET history_read = 1`,
+  )
+    .bind(...except.map((address) => address.toLowerCase()))
+    .run();
 
 function api(
   path: string,
@@ -211,7 +224,13 @@ afterEach(() => vi.restoreAllMocks());
 
 describe('routing', () => {
   it('answers health, unknown routes and CORS preflight', async () => {
-    expect(await (await api('health')).json()).toEqual({ status: 'ok' });
+    expect(await (await api('health')).json()).toEqual({
+      status: 'ok',
+      readers: {},
+      behind: [],
+      missed: {},
+      notifications_pending: 0,
+    });
     expect((await api('nothing')).status).toBe(404);
     const preflight = await api('profile', {
       method: 'OPTIONS',
@@ -381,6 +400,25 @@ describe('GatoPago Business sign-in', () => {
     expect((await api('profile', { token: session.token })).status).toBe(401);
     // Flow checks it with Wallet Core, which accepts a Business session there.
     expect((await api('auth/session', { token: session.token })).status).toBe(200);
+
+    // Opened by the QR alone (no Business key): the app lists it and can end it.
+    const accesses = async () =>
+      (await api('business-keys', { token })).json<{ sessions: { id: string }[] }>();
+    expect(await accesses()).toMatchObject({
+      keys: [],
+      sessions: [{ id: request.id, device: 'Chrome · Windows' }],
+    });
+    // The hourly cleanup keeps its record while the session may still be open.
+    await env.WALLET_DB.prepare('UPDATE business_logins SET expires_at = ? WHERE id = ?')
+      .bind(Math.floor(Date.now() / 1000) - 7200, request.id)
+      .run();
+    await worker.scheduled(createScheduledController({ cron: '0 * * * *' }), env);
+    expect((await accesses()).sessions).toHaveLength(1);
+    expect((await api('auth/session', { token: session.token })).status).toBe(200);
+    // Ended from the app: the console's session stops counting, also for Flow.
+    await api(`business-sessions/${request.id}`, { method: 'DELETE', token });
+    expect((await accesses()).sessions).toEqual([]);
+    expect((await api('auth/session', { token: session.token })).status).toBe(401);
   });
 
   it('binds a Business key with the QR, signs in with it anywhere, and ends its sessions when removed', async () => {
@@ -778,6 +816,40 @@ describe('sponsored operations', () => {
     await expect(bundler.sendUserOperation({ calls: [approveNothing] })).rejects.toThrow(/429/);
   });
 
+  it('signs up an account it does not know only with an owner the network still has', async () => {
+    const account = await newAccount();
+    const bundler = bundlerFor(account, await member(account));
+    const hash = await bundler.sendUserOperation({ calls: [approveNothing] });
+    expect((await bundler.waitForUserOperationReceipt({ hash })).success).toBe(true);
+    // Deployed, it adds another owner and removes its first passkey (as the account itself).
+    const other = passkeyOwner(
+      walletContracts.webAuthnVerifier,
+      (await softwarePasskey()).publicKey,
+    );
+    await anvil.impersonateAccount({ address: account.address });
+    await anvil.setBalance({ address: account.address, value: parseEther('1') });
+    for (const [functionName, owners] of [
+      ['addOwners', [other]],
+      ['removeOwners', [...account.initialOwners]],
+    ] as const)
+      await client.waitForTransactionReceipt({
+        hash: await anvil.sendTransaction({
+          account: account.address,
+          chain,
+          to: account.address,
+          data: encodeFunctionData({ abi: gatopagoAccountAbi, functionName, args: [owners] }),
+        }),
+      });
+    await anvil.stopImpersonatingAccount({ address: account.address });
+    // Wallet Core loses it (a reset): the removed passkey still proves the initial owners, but the
+    // network says it no longer owns the account.
+    await env.WALLET_DB.prepare('DELETE FROM members WHERE lower(address) = ?')
+      .bind(account.address.toLowerCase())
+      .run();
+    const again = await signIn(account, { invite: await invite(), turnstile: 'human' });
+    expect(await again.json()).toEqual({ error_code: 'SIGNATURE_INVALID' });
+  });
+
   it('sponsors only the signed-in account', async () => {
     const account = await newAccount();
     await member(account);
@@ -931,6 +1003,17 @@ describe('activity', () => {
     return sent;
   }
 
+  it('tells the exact amount in each coin, never rounded to zero', () => {
+    expect(amountText(1n, 7, false)).toBe('0,0000001');
+    expect(amountText(1n, 18, true)).toBe('0.000000000000000001');
+    expect(amountText(10n ** 17n, 18, false)).toBe('0,10');
+    expect(amountText(1_234_567_500_000n, 6, false)).toBe('1.234.567,50');
+    expect(amountText(1_234_567_500_000n, 6, true)).toBe('1,234,567.50');
+    expect(amountText(123_456_789_012_345_678_901_234_567n, 18, true)).toBe(
+      '123,456,789.012345678901234567',
+    );
+  });
+
   it('keeps the native coin sent straight to a member, and notifies it', async () => {
     const alice = await newAccount();
     const token = await member(alice);
@@ -958,6 +1041,42 @@ describe('activity', () => {
     expect(sent.map(({ message }) => message.data.title)).toEqual(['Recibiste 0,10 ETH']);
   });
 
+  it('keeps the native coin a smart account pays from inside its transaction, each call apart', async () => {
+    const alice = await newAccount();
+    const token = await member(alice);
+    const block = toHex(await client.getBlockNumber());
+    const internal = (trace: string, value: bigint) => ({
+      category: 'internal',
+      typeTraceAddress: trace,
+      fromAddress: privateKeyToAccount(generatePrivateKey()).address,
+      toAddress: alice.address.toLowerCase(),
+      hash: `0x${'d1'.repeat(32)}`,
+      blockNum: block,
+      asset: 'ETH',
+      rawContract: { rawValue: toHex(value), address: null, decimals: 18 },
+    });
+    // Two payments in one batch: one transaction, two calls.
+    const batch = [internal('call_0_1_0', 10n ** 16n), internal('call_0_1_1', 2n * 10n ** 16n)];
+    expect((await post(batch)).status).toBe(200);
+    // Delivered again: nothing doubles. Without its place in the trace, it is not kept.
+    const untraced = { ...internal('call_0_2', 10n ** 16n), typeTraceAddress: undefined };
+    expect((await post([...batch, untraced])).status).toBe(200);
+    const { activity } = await (
+      await api('activity', { token })
+    ).json<{
+      activity: { amount: string; id: string }[];
+    }>();
+    expect(activity.map(({ amount }) => amount).sort()).toEqual([
+      '10000000000000000',
+      '20000000000000000',
+    ]);
+    // Their indexes stay apart from a transaction's own value (-1), and a page can end on one.
+    const indexes = activity.map(({ id }) => Number(id.split(':').at(-1)));
+    for (const index of indexes) expect(index).toBeLessThan(-1);
+    const cursor = `${Math.floor(Date.now() / 1000)}_1_${indexes[0]}_${'d1'.repeat(32)}`;
+    expect((await api(`activity?before=${cursor}`, { token })).status).toBe(200);
+  });
+
   it("reads members' transfers and their earlier history through Envio HyperSync", async () => {
     const [alice, bob, carol] = [await newAccount(), await newAccount(), await newAccount()];
     const [aliceToken, bobToken] = [await member(alice), await member(bob)];
@@ -983,9 +1102,7 @@ describe('activity', () => {
     });
     const now = Math.floor(Date.now() / 1000);
     // Only these two are read for their earlier history.
-    await env.WALLET_DB.prepare('UPDATE members SET history_read = 1 WHERE address NOT IN (?, ?)')
-      .bind(alice.address.toLowerCase(), bob.address.toLowerCase())
-      .run();
+    await historyReadBut(alice.address, bob.address);
 
     const log = (from: Hex, to: Hex, value: bigint, block: number, hash: string) => ({
       block_number: block,
@@ -1177,11 +1294,11 @@ describe('activity', () => {
     const before = await env.WALLET_DB.prepare(
       "SELECT block FROM index_cursors WHERE network = 'eip155:421614'",
     ).first<number>('block');
-    await env.WALLET_DB.prepare('UPDATE members SET history_read = 1 WHERE address != ?')
-      .bind(erin.address.toLowerCase())
-      .run();
+    await historyReadBut(erin.address);
     const read = async () =>
-      (await env.WALLET_DB.prepare('SELECT history_read FROM members WHERE address = ?')
+      (await env.WALLET_DB.prepare(
+        "SELECT history_read FROM member_networks WHERE address = ? AND network = 'eip155:421614'",
+      )
         .bind(erin.address.toLowerCase())
         .first<number>('history_read')) === 1;
     const progress = () =>
@@ -1228,6 +1345,96 @@ describe('activity', () => {
             "UPDATE index_cursors SET block = ? WHERE network = 'eip155:421614'",
           ).bind(before)
     ).run();
+  });
+
+  it('gives each network its turn: one far behind or failing does not stop the others', async () => {
+    const settings = config({
+      ...env,
+      WALLET_NETWORKS: 'eip155:421614,eip155:43113',
+      WALLET_RPC_URLS: JSON.stringify({ 'eip155:421614': FORK_RPC, 'eip155:43113': FORK_RPC }),
+      INDEX_SOURCES: JSON.stringify({
+        'eip155:421614': { hypersync: 'https://421614.hypersync.xyz', since: 1000 },
+        'eip155:43113': { hypersync: 'https://43113.hypersync.xyz', since: 1000 },
+      }),
+      ENVIO_API_TOKEN: 'envio-test-token',
+    });
+    const read = (key: string) =>
+      env.WALLET_DB.prepare('SELECT block FROM index_cursors WHERE network = ?')
+        .bind(key)
+        .first<number>('block');
+    const before = await read('eip155:421614');
+    await env.WALLET_DB.batch(
+      ['eip155:421614', 'eip155:43113'].map((id) =>
+        env.WALLET_DB.prepare(
+          `INSERT INTO index_cursors (network, block) VALUES (?, 5000)
+           ON CONFLICT (network) DO UPDATE SET block = excluded.block`,
+        ).bind(id),
+      ),
+    );
+    let arbitrumDown = false;
+    const reconciled: Record<string, number> = { 421614: 0, 43113: 0 };
+    notifications(async (request) => {
+      const chain = /^https:\/\/(\d+)\.hypersync\.xyz\/query$/.exec(request.url)?.[1];
+      if (!chain) return null;
+      if (chain === '421614' && arbitrumDown) return new Response('unavailable', { status: 503 });
+      const body = await request.json<{ from_block: number; to_block?: number }>();
+      if (body.to_block === undefined) reconciled[chain]++;
+      // A history reads up to where it is asked; the reconciliation, one block per page of an
+      // archive far ahead: there is always more.
+      return Response.json({
+        data: [],
+        next_block: body.to_block ?? body.from_block + 1,
+        archive_height: 1_000_000,
+      });
+    });
+
+    // Both far behind, with 10 requests: each network gets half, not the first one all.
+    await reconcileTransfers(env, settings, new Budget(10));
+    expect(reconciled).toEqual({ 421614: 5, 43113: 5 });
+    expect([await read('eip155:421614'), await read('eip155:43113')]).toEqual([5005, 5005]);
+    // Arbitrum's source fails: Fuji goes on with what Arbitrum left, and the health check says
+    // which one stopped.
+    arbitrumDown = true;
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await reconcileTransfers(env, settings, new Budget(10));
+    expect([await read('eip155:421614'), await read('eip155:43113')]).toEqual([5005, 5014]);
+    const health = await (
+      await api('health')
+    ).json<{
+      status: string;
+      behind: string[];
+      readers: Record<string, { block: number | null; failed_at: number | null }>;
+    }>();
+    expect(health.status).toBe('behind');
+    expect(health.behind).toContain('eip155:421614');
+    expect(health.behind).not.toContain('eip155:43113');
+    expect(health.readers['eip155:43113']).toMatchObject({ block: 5014, failed_at: null });
+    expect(health.readers['eip155:421614'].failed_at).toBeGreaterThan(0);
+
+    // A network added later: the earlier history is read there for members already read elsewhere.
+    arbitrumDown = false;
+    await historyReadBut();
+    const readOnFuji = () =>
+      env.WALLET_DB.prepare(
+        "SELECT count(*) AS n FROM member_networks WHERE network = 'eip155:43113' AND history_read = 1",
+      ).first<number>('n');
+    expect(await readOnFuji()).toBe(0);
+    await readMemberHistories(env, settings, new Budget(45));
+    expect(await readOnFuji()).toBe(5);
+
+    await env.WALLET_DB.batch([
+      env.WALLET_DB.prepare(
+        "DELETE FROM index_cursors WHERE network IN ('eip155:43113', 'eip155:421614')",
+      ),
+      env.WALLET_DB.prepare('DELETE FROM index_failures'),
+      ...(before === null
+        ? []
+        : [
+            env.WALLET_DB.prepare(
+              "INSERT INTO index_cursors (network, block) VALUES ('eip155:421614', ?)",
+            ).bind(before),
+          ]),
+    ]);
   });
 
   it('finishes a range group by group when one run cannot read every member', async () => {
@@ -1463,11 +1670,21 @@ describe('activity', () => {
     });
     // The device shows one notification per movement, even if it comes twice.
     expect(sent[0].message.data.tag).toMatch(/^eip155:421614:0x[0-9a-f]{64}:\d+$/);
+    // A transfer of nothing is neither kept nor notified; the smallest amount is told as it is.
+    await deliver((await pay(HOLDER, erin.address, 0n)).logs);
+    await deliver((await pay(HOLDER, erin.address, 1n)).logs);
+    expect(sent.map(({ message }) => message.data.title)).toEqual([
+      'Recibiste 3,00 USDC',
+      'Recibiste 0,000001 USDC',
+    ]);
+    expect(
+      await env.WALLET_DB.prepare("SELECT 1 FROM transfers WHERE amount = '0'").first(),
+    ).toBeNull();
 
     // FCM fails: the notification stays pending, and the next run sends it once FCM is back.
     fcmStatus = 503;
     await deliver((await pay(HOLDER, erin.address, 2_000_000n)).logs);
-    expect(sent).toHaveLength(2);
+    expect(sent).toHaveLength(3);
     const pending = () =>
       env.WALLET_DB.prepare(
         'SELECT notify_at, notify_attempts FROM transfers WHERE to_address = ? AND amount = ?',
@@ -1511,6 +1728,33 @@ describe('activity', () => {
     expect(updates[0].addresses_to_add).toContain(dave.address.toLowerCase());
     await watch();
     expect(updates).toHaveLength(1);
+
+    // A webhook configured later gets every member; one that fails keeps them for the next run.
+    const replaced = config({
+      ...env,
+      ALCHEMY_WEBHOOKS: JSON.stringify({
+        'eip155:421614': { id: 'wh_new', signing_key: 'test-signing-key' },
+      }),
+    });
+    const { n } = (await env.WALLET_DB.prepare('SELECT count(*) AS n FROM members').first<{
+      n: number;
+    }>())!;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      if (String(input) !== 'https://dashboard.alchemy.com/api/update-webhook-addresses')
+        return realFetch(input, init);
+      updates.push(JSON.parse(String(init?.body)));
+      return new Response(null, { status: updates.length === 2 ? 500 : 200 });
+    });
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await watchMembers(env, replaced, new Budget(45));
+    await watchMembers(env, replaced, new Budget(45));
+    await watchMembers(env, replaced, new Budget(45));
+    expect(updates.map(({ webhook_id }) => webhook_id)).toEqual(['wh_test', 'wh_new', 'wh_new']);
+    expect(updates[2].addresses_to_add).toHaveLength(n);
+    // The other tests watch with the configured webhook.
+    await env.WALLET_DB.prepare(
+      "UPDATE member_networks SET webhook = 'wh_test' WHERE webhook = 'wh_new'",
+    ).run();
   });
 });
 
@@ -1595,8 +1839,33 @@ describe('stellar', () => {
     const nonce = lastNonce!;
     expect(await (await api(`stellar/submit?nonce=${nonce}`, { token })).json()).toEqual({
       transaction_hash,
+      status: 'confirmed',
     });
-    expect((await api('stellar/submit?nonce=1', { token })).status).toBe(404);
+    // Answers the relayer lost stay pending until the minute cron asks the network by hash: one
+    // that landed is confirmed, and one unknown past its time bound never landed.
+    const lost = 'f'.repeat(64);
+    const longAgo = Math.floor(Date.now() / 1000) - 600;
+    await env.WALLET_DB.batch([
+      env.WALLET_DB.prepare(
+        `UPDATE stellar_submissions SET status = 'pending', created_at = ? WHERE transaction_hash = ?`,
+      ).bind(longAgo, transaction_hash),
+      env.WALLET_DB.prepare(
+        `INSERT INTO stellar_submissions (member_address, nonce, transaction_hash, created_at, status)
+         VALUES (?, '1', ?, ?, 'pending')`,
+      ).bind(account.address.toLowerCase(), lost, longAgo),
+    ]);
+    expect(
+      (await (await api(`stellar/submit?nonce=${nonce}`, { token })).json<{ status: string }>())
+        .status,
+    ).toBe('pending');
+    await minute();
+    const status = (hash: string) =>
+      env.WALLET_DB.prepare('SELECT status FROM stellar_submissions WHERE transaction_hash = ?')
+        .bind(hash)
+        .first<string>('status');
+    expect(await status(transaction_hash)).toBe('confirmed');
+    expect(await status(lost)).toBe('failed');
+    expect((await api('stellar/submit?nonce=2', { token })).status).toBe(404);
     const stranger = await member(await newAccount());
     expect((await api(`stellar/submit?nonce=${nonce}`, { token: stranger })).status).toBe(404);
     // The sponsor's own funds are not the member's to move.
@@ -1682,6 +1951,10 @@ describe('stellar', () => {
       .bind(burn)
       .first('relayed_hash');
 
+  /** A burn toward Stellar sent by 0x75…, not by any member (the 10b check's message). */
+  const othersBurn =
+    '0x00000001000000030000001b738d171da655afc22ca3e9bcea81ff84454200ce440c0d5254da12654a3f63c10000000000000000000000008fe6b999dc680ccfdd5bf7eb0974218be2542daada6f9ee0786c812344d82817ef19b648b4af120f8bd10bf658e6b99eacff24b83de86ac50b47eaf2840fe23e48179551660fd1072fba6f445d4a6bd7af4ab93e000003e8000003e80000000100000000000000000000000075faf114eafb1bdbe2f0316df893fd58ce46aa4d3de86ac50b47eaf2840fe23e48179551660fd1072fba6f445d4a6bd7af4ab93e00000000000000000000000000000000000000000000000000000000000f424000000000000000000000000075464f762bc50d0a0b127ab5a085504bf102bb880000000000000000000000000000000000000000000000000000000000000082000000000000000000000000000000000000000000000000000000000000008200000000000000000000000000000000000000000000000000000000004d5c6a000000000000000000000000000000000000000000000000000000000000003843435942413344484d584f5a49484e4a4b43325644505144345758593347345457575042324155353747543551474942555141444e543351';
+
   it("mints members' burns toward Stellar, never someone else's", async () => {
     const token = await member(await newAccount());
     const burn = `0x${'cd'.repeat(32)}`;
@@ -1694,13 +1967,13 @@ describe('stellar', () => {
     expect(await status(token)).toEqual({ status: 'pending', transaction_hash: null });
     // Another member does not see it.
     expect(await status(await member(await newAccount()))).toEqual({ error_code: 'NOT_FOUND' });
-    // Attested, but burned by 0x75…, not by this member (the 10b check's message).
-    const message =
-      '0x00000001000000030000001b738d171da655afc22ca3e9bcea81ff84454200ce440c0d5254da12654a3f63c10000000000000000000000008fe6b999dc680ccfdd5bf7eb0974218be2542daada6f9ee0786c812344d82817ef19b648b4af120f8bd10bf658e6b99eacff24b83de86ac50b47eaf2840fe23e48179551660fd1072fba6f445d4a6bd7af4ab93e000003e8000003e80000000100000000000000000000000075faf114eafb1bdbe2f0316df893fd58ce46aa4d3de86ac50b47eaf2840fe23e48179551660fd1072fba6f445d4a6bd7af4ab93e00000000000000000000000000000000000000000000000000000000000f424000000000000000000000000075464f762bc50d0a0b127ab5a085504bf102bb880000000000000000000000000000000000000000000000000000000000000082000000000000000000000000000000000000000000000000000000000000008200000000000000000000000000000000000000000000000000000000004d5c6a000000000000000000000000000000000000000000000000000000000000003843435942413344484d584f5a49484e4a4b43325644505144345758593347345457575042324155353747543551474942555141444e543351';
+    // Attested, but burned by 0x75…, not by this member.
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
       const url = input instanceof Request ? input.url : String(input);
       if (url === `https://iris-api-sandbox.circle.com/v2/messages/3?transactionHash=${burn}`)
-        return Response.json({ messages: [{ status: 'complete', message, attestation: '0x01' }] });
+        return Response.json({
+          messages: [{ status: 'complete', message: othersBurn, attestation: '0x01' }],
+        });
       return alchemy(url) ?? realFetch(input, init);
     });
     // The request woke the relayer; nothing is left waiting after it rejects the burn.
@@ -1753,13 +2026,17 @@ describe('stellar', () => {
       status: 'pending',
       transaction_hash: null,
     });
-    // Attested (the message the burn emitted): it pays the member, so the relayer tries the mint.
-    // This attestation is not Circle's, so Stellar refuses it and the burn keeps waiting.
+    // Attested (the message the burn emitted), after another member's burn in the same answer: the
+    // relayer picks the one that pays this member and tries the mint. This attestation is not
+    // Circle's, so Stellar refuses it and the burn keeps waiting, not rejected.
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
       const url = input instanceof Request ? input.url : String(input);
       if (url === `https://iris-api-sandbox.circle.com/v2/messages/3?transactionHash=${burn}`)
         return Response.json({
-          messages: [{ status: 'complete', message: args.message, attestation: '0x01' }],
+          messages: [
+            { status: 'complete', message: othersBurn, attestation: '0x01' },
+            { status: 'complete', message: args.message, attestation: '0x01' },
+          ],
         });
       return alchemy(url) ?? realFetch(input, init);
     });
@@ -1829,6 +2106,58 @@ describe('stellar', () => {
     expect(reads).not.toContain(first);
     expect(await progress('stellar:testnet')).toBe(latest);
     expect(await progress('group:stellar:testnet')).toBeNull();
+  });
+
+  it('catches up while the RPC keeps the ledgers, and records the ones it no longer has', async () => {
+    const settings = config(env);
+    const latest = 7_000_000;
+    // The public RPC keeps about a week of ledgers.
+    const oldest = latest - 120_960;
+    const starts: number[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (!url.startsWith(testnet.rpcUrl)) return alchemy(url) ?? realFetch(input, init);
+      const { id, method, params } = JSON.parse(
+        String(input instanceof Request ? await input.text() : init?.body),
+      );
+      const ledgers = { latestLedger: latest, oldestLedger: oldest };
+      if (method === 'getHealth')
+        return Response.json({ jsonrpc: '2.0', id, result: { status: 'healthy', ...ledgers } });
+      starts.push(params.startLedger);
+      return Response.json({ jsonrpc: '2.0', id, result: { events: [], cursor: '0', ...ledgers } });
+    });
+    const progress = (key: string) =>
+      env.WALLET_DB.prepare('SELECT block FROM index_cursors WHERE network = ?')
+        .bind(key)
+        .first<number>('block');
+    const stopAt = (ledger: number) =>
+      env.WALLET_DB.batch([
+        env.WALLET_DB.prepare(
+          `INSERT INTO index_cursors (network, block) VALUES ('stellar:testnet', ?)
+           ON CONFLICT (network) DO UPDATE SET block = excluded.block`,
+        ).bind(ledger),
+        env.WALLET_DB.prepare(
+          "DELETE FROM index_cursors WHERE network IN ('group:stellar:testnet', 'range:stellar:testnet')",
+        ),
+      ]);
+
+    // Stopped two days ago, within what the RPC keeps: it goes on from there.
+    await stopAt(latest - 34_560);
+    await indexTransfers(env, settings.stellar!, new Budget(45));
+    expect(Math.min(...starts)).toBe(latest - 34_560 + 1);
+    expect(await progress('missed:stellar:testnet')).toBeNull();
+    // Stopped longer than that: what the RPC lost is recorded, and it goes on from the oldest kept.
+    starts.length = 0;
+    await stopAt(oldest - 500);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await indexTransfers(env, settings.stellar!, new Budget(45));
+    expect(Math.min(...starts)).toBe(oldest);
+    expect(await progress('missed:stellar:testnet')).toBe(oldest - 1);
+    const health = await (await api('health')).json<{ missed: Record<string, number> }>();
+    expect(health.missed).toEqual({ 'stellar:testnet': oldest - 1 });
+    await env.WALLET_DB.prepare(
+      "DELETE FROM index_cursors WHERE network = 'missed:stellar:testnet'",
+    ).run();
   });
 
   it('lists Stellar transfers of USDC and XLM with the activity and notifies the receiver', async () => {

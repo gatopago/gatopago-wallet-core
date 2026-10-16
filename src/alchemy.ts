@@ -4,12 +4,14 @@ import {
   hexToBytes,
   isAddress,
   isHex,
+  keccak256,
+  stringToHex,
   type Address,
   type Hex,
 } from 'viem';
 import { coinOf, NATIVE_LOG_INDEX, storeTransfers, transferEvent, type Transfer } from './activity';
 import { Budget } from './budget';
-import type { Config } from './config';
+import type { Config, Network } from './config';
 import { HttpError, json, readBody } from './http';
 import { sendNotifications } from './notifications';
 
@@ -18,8 +20,13 @@ interface ActivityEvent {
   type?: string;
   event?: {
     activity?: {
-      /** `external`: a transaction's own value in the native coin (no log); `token`: a log. */
+      /**
+       * `external`: a transaction's own value in the native coin; `internal`: native coin moved by
+       * a call inside a transaction (a smart account paying); `token`: a log.
+       */
       category?: string;
+      /** An internal transfer's call and place in the trace (`call_0_1`): unique in its transaction. */
+      typeTraceAddress?: string;
       fromAddress?: string;
       toAddress?: string;
       hash?: string;
@@ -40,11 +47,25 @@ interface ActivityEvent {
 
 type Activity = NonNullable<NonNullable<ActivityEvent['event']>['activity']>[number];
 
-/** A transaction sending the native coin straight to an address (Alchemy's `external`), or null. */
+/**
+ * The log index of an internal transfer, which has no log: below `NATIVE_LOG_INDEX`, from 48 bits of
+ * the hash of its place in the trace, so two in one transaction never share a row.
+ */
+const traceIndex = (trace: string) =>
+  NATIVE_LOG_INDEX - 1 - Number(BigInt(keccak256(stringToHex(trace)).slice(0, 14)));
+
+/**
+ * A transfer of the native coin, or null: a transaction's own value sent straight to an address
+ * (Alchemy's `external`), or a call inside a transaction (`internal`), as when a smart account pays:
+ * its transaction goes to the EntryPoint. Alchemy reports internal ones on Arbitrum and Avalanche,
+ * not on Monad, and only by webhook: the reconciliation reads logs and transactions, not traces.
+ */
 function nativeTransfer(activity: Activity): Transfer | null {
-  const { category, fromAddress, toAddress, hash, blockNum, rawContract } = activity;
+  const { category, fromAddress, toAddress, hash, blockNum, rawContract, typeTraceAddress } =
+    activity;
+  const internal = category === 'internal';
   if (
-    category !== 'external' ||
+    (category !== 'external' && !(internal && typeTraceAddress)) ||
     rawContract?.address ||
     !fromAddress ||
     !toAddress ||
@@ -58,7 +79,7 @@ function nativeTransfer(activity: Activity): Transfer | null {
     return null;
   return {
     transactionHash: hash,
-    logIndex: NATIVE_LOG_INDEX,
+    logIndex: internal ? traceIndex(typeTraceAddress!) : NATIVE_LOG_INDEX,
     blockNumber: BigInt(blockNum),
     token: null,
     from: getAddress(fromAddress),
@@ -86,8 +107,8 @@ async function signedBy(signingKey: string, body: string, signature: string | nu
 
 /**
  * `POST /app/v1/webhooks/alchemy`: an Address Activity event, signed with its webhook's key. Keeps
- * the members' transfers of the configured coins and of the native coin sent straight to them, and
- * forgets those a reorg removed.
+ * the members' transfers of the configured coins and of the native coin, sent by a transaction or
+ * by a contract, and forgets those a reorg removed.
  */
 export async function receiveAlchemyWebhook(
   request: Request,
@@ -158,36 +179,53 @@ export async function receiveAlchemyWebhook(
   return json({});
 }
 
-/** Adds the addresses of new members to every network's webhook, so their activity is delivered. */
+/**
+ * Adds members' addresses to each network's webhook, so their activity is delivered: new members,
+ * and all of them when a webhook is replaced or a network added (`member_networks` keeps which
+ * webhook has each address). A webhook that fails waits for the next run; the others go on.
+ */
 export async function watchMembers(env: Env, config: Config, budget: Budget): Promise<void> {
-  const webhooks = [...config.networks.values()].flatMap((network) =>
-    network.webhook ? [network.webhook.id] : [],
-  );
-  if (!config.alchemyAuthToken || webhooks.length === 0) return;
+  if (!config.alchemyAuthToken) return;
+  for (const network of config.networks.values())
+    if (network.webhook)
+      await watchOn(env, network, network.webhook.id, config.alchemyAuthToken, budget).catch(
+        (error: unknown) => console.error(error),
+      );
+}
+
+async function watchOn(env: Env, network: Network, webhook: string, token: string, budget: Budget) {
   const { results } = await env.WALLET_DB.prepare(
-    'SELECT address FROM members WHERE watched = 0 LIMIT 1000',
-  ).all<{ address: string }>();
-  if (results.length === 0 || !budget.take(webhooks.length)) return;
+    `SELECT members.address FROM members
+     LEFT JOIN member_networks ON member_networks.address = members.address
+       AND member_networks.network = ?
+     WHERE member_networks.webhook IS NOT ? LIMIT 1000`,
+  )
+    .bind(network.id, webhook)
+    .all<{ address: string }>();
+  if (results.length === 0 || !budget.take()) return;
   const addresses = results.map((row) => row.address);
-  for (const webhookId of webhooks) {
-    const response = await fetch('https://dashboard.alchemy.com/api/update-webhook-addresses', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json', 'X-Alchemy-Token': config.alchemyAuthToken },
-      body: JSON.stringify({
-        webhook_id: webhookId,
-        addresses_to_add: addresses,
-        addresses_to_remove: [],
-      }),
-    });
-    if (!response.ok) throw new Error(`ALCHEMY_WEBHOOK_UPDATE_FAILED: ${response.status}`);
-  }
+  const response = await fetch('https://dashboard.alchemy.com/api/update-webhook-addresses', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', 'X-Alchemy-Token': token },
+    body: JSON.stringify({
+      webhook_id: webhook,
+      addresses_to_add: addresses,
+      addresses_to_remove: [],
+    }),
+  });
+  if (!response.ok)
+    throw new Error(`ALCHEMY_WEBHOOK_UPDATE_FAILED: ${network.id} ${response.status}`);
+  // D1 binds at most 100 parameters per statement: the network, the webhook and 98 addresses.
   const statements = [];
-  for (let i = 0; i < addresses.length; i += 100) {
-    const batch = addresses.slice(i, i + 100);
+  for (let i = 0; i < addresses.length; i += 98) {
+    const batch = addresses.slice(i, i + 98);
     statements.push(
       env.WALLET_DB.prepare(
-        `UPDATE members SET watched = 1 WHERE address IN (${batch.map(() => '?').join(',')})`,
-      ).bind(...batch),
+        `INSERT INTO member_networks (address, network, webhook)
+         SELECT address, ?1, ?2 FROM members
+         WHERE address IN (${batch.map((_, j) => `?${j + 3}`).join(', ')})
+         ON CONFLICT (address, network) DO UPDATE SET webhook = excluded.webhook`,
+      ).bind(network.id, webhook, ...batch),
     );
   }
   await env.WALLET_DB.batch(statements);
