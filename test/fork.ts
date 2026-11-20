@@ -1,5 +1,18 @@
 import { spawn } from 'node:child_process';
-import { createTestClient, http, parseAbi, parseEther, publicActions, walletActions } from 'viem';
+import { existsSync, readFileSync } from 'node:fs';
+import {
+  concatHex,
+  createTestClient,
+  encodeAbiParameters,
+  http,
+  keccak256,
+  parseAbi,
+  parseEther,
+  publicActions,
+  toBytes,
+  walletActions,
+  type Hex,
+} from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { arbitrumSepolia } from 'viem/chains';
 import { walletContracts } from '@gatopago/shared/networks';
@@ -9,10 +22,17 @@ export const FORK_RPC = 'http://127.0.0.1:8711';
 export const RELAYER_KEY = '0xac0974bec39a17e36ba4a846b8f9e6d0f2a4cf0b8ba3c9ec2a1fe8a7d6a5f1a7';
 export const SPONSOR_KEY = '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d';
 const PAYMASTER_OWNER = '0x75464f762bc50d0A0B127ab5a085504BF102Bb88';
+/** The paymaster as protocol builds it, next to this repo (`DeployWallet.s.sol`). */
+const PAYMASTER_BUILD = new URL(
+  '../../protocol/contracts/out/GatoPagoPaymaster.sol/GatoPagoPaymaster.json',
+  import.meta.url,
+);
+const CREATE2_DEPLOYER = '0x4e59b44847b379578588920cA78FbF26c0B4956C';
 
 /**
  * Vitest global setup: a fork of Arbitrum Sepolia, where GatoPago's contracts are deployed, with
- * the paymaster's sponsor signer set to a test key. Osaka provides the P256 precompile.
+ * the paymaster's sponsor signer and relayer set to test keys. A paymaster not on the network yet is
+ * deployed from protocol's build, as `DeployWallet.s.sol` does. Osaka provides the P256 precompile.
  */
 export default async function setup() {
   const anvil = spawn(
@@ -55,12 +75,31 @@ export default async function setup() {
     bytecode: '0x6103e860005260606000f3',
   });
   await client.impersonateAccount({ address: PAYMASTER_OWNER });
+  if (
+    !(await client.getCode({ address: walletContracts.paymaster })) &&
+    existsSync(PAYMASTER_BUILD)
+  ) {
+    const bytecode: Hex = JSON.parse(readFileSync(PAYMASTER_BUILD, 'utf8')).bytecode.object;
+    const args = encodeAbiParameters(
+      [{ type: 'address' }, { type: 'address' }, { type: 'address' }],
+      [PAYMASTER_OWNER, PAYMASTER_OWNER, PAYMASTER_OWNER],
+    );
+    const hash = await client.sendTransaction({
+      account: PAYMASTER_OWNER,
+      chain: arbitrumSepolia,
+      to: CREATE2_DEPLOYER,
+      data: concatHex([keccak256(toBytes('gatopago.wallet.v1')), bytecode, args]),
+    });
+    await client.waitForTransactionReceipt({ hash });
+  }
   const paymasterAbi = parseAbi([
     'function setSponsorSigner(address)',
+    'function setRelayer(address)',
     'function deposit() payable',
   ]);
   for (const request of [
     { functionName: 'setSponsorSigner', args: [privateKeyToAccount(SPONSOR_KEY).address] },
+    { functionName: 'setRelayer', args: [privateKeyToAccount(RELAYER_KEY).address] },
     { functionName: 'deposit', value: parseEther('10') },
   ] as const) {
     const hash = await client.writeContract({
