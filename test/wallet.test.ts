@@ -1955,15 +1955,41 @@ describe('stellar', () => {
   const othersBurn =
     '0x00000001000000030000001b738d171da655afc22ca3e9bcea81ff84454200ce440c0d5254da12654a3f63c10000000000000000000000008fe6b999dc680ccfdd5bf7eb0974218be2542daada6f9ee0786c812344d82817ef19b648b4af120f8bd10bf658e6b99eacff24b83de86ac50b47eaf2840fe23e48179551660fd1072fba6f445d4a6bd7af4ab93e000003e8000003e80000000100000000000000000000000075faf114eafb1bdbe2f0316df893fd58ce46aa4d3de86ac50b47eaf2840fe23e48179551660fd1072fba6f445d4a6bd7af4ab93e00000000000000000000000000000000000000000000000000000000000f424000000000000000000000000075464f762bc50d0a0b127ab5a085504bf102bb880000000000000000000000000000000000000000000000000000000000000082000000000000000000000000000000000000000000000000000000000000008200000000000000000000000000000000000000000000000000000000004d5c6a000000000000000000000000000000000000000000000000000000000000003843435942413344484d584f5a49484e4a4b43325644505144345758593347345457575042324155353747543551474942555141444e543351';
 
+  /** A burn on Arbitrum by an outside holder toward `recipient` on Stellar, and its receipt. */
+  async function burnTowardStellar(recipient: string) {
+    await anvil.impersonateAccount({ address: HOLDER });
+    await anvil.setBalance({ address: HOLDER, value: parseEther('1') });
+    let receipt;
+    for (const call of crosschainToStellarCalls({
+      from: walletNetworks['eip155:421614'],
+      to: testnet,
+      amount: 1_000_000n,
+      recipient,
+      maxFee: 1_000n,
+    }))
+      receipt = await client.waitForTransactionReceipt({
+        hash: await anvil.sendTransaction({ account: HOLDER, chain, ...call }),
+      });
+    return receipt!;
+  }
+
   it("mints members' burns toward Stellar, never someone else's", async () => {
     const token = await member(await newAccount());
-    const burn = `0x${'cd'.repeat(32)}`;
-    const relay = (network: string) =>
-      api('stellar/relays', { token, body: { network, transaction_hash: burn } });
+    const relay = (network: string, hash: string) =>
+      api('stellar/relays', { token, body: { network, transaction_hash: hash } });
+    // Only a burn toward Stellar waits for the relayer: any other hash would hold its place.
+    expect(await (await relay('eip155:421614', `0x${'cd'.repeat(32)}`)).json()).toEqual({
+      error_code: 'BURN_TO_STELLAR_NOT_FOUND',
+    });
+    const burn = (
+      await burnTowardStellar(
+        stellarAccountAddress(testnet, sponsor, privateKeyToAccount(generatePrivateKey()).address),
+      )
+    ).transactionHash;
     const status = async (token: string) =>
       (await api(`stellar/relays?transaction_hash=${burn}`, { token })).json();
-    expect((await relay('eip155:1')).status).toBe(404);
-    expect((await relay('eip155:421614')).status).toBe(202);
+    expect((await relay('eip155:1', burn)).status).toBe(404);
+    expect((await relay('eip155:421614', burn)).status).toBe(202);
     expect(await status(token)).toEqual({ status: 'pending', transaction_hash: null });
     // Another member does not see it.
     expect(await status(await member(await newAccount()))).toEqual({ error_code: 'NOT_FOUND' });
@@ -1986,7 +2012,6 @@ describe('stellar', () => {
   it("finds burns toward a member's Stellar account from any wallet, and mints them", async () => {
     const account = await newAccount();
     const token = await member(account);
-    const arbitrum = walletNetworks['eip155:421614'];
     const recipient = stellarAccountAddress(testnet, sponsor, account.address);
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
       const url = input instanceof Request ? input.url : String(input);
@@ -1995,23 +2020,11 @@ describe('stellar', () => {
     // The first run starts reading burns at the latest block.
     await minute();
     // Someone outside GatoPago burns USDC on Arbitrum toward the member's Stellar account.
-    await anvil.impersonateAccount({ address: HOLDER });
-    await anvil.setBalance({ address: HOLDER, value: parseEther('1') });
-    let receipt;
-    for (const call of crosschainToStellarCalls({
-      from: arbitrum,
-      to: testnet,
-      amount: 1_000_000n,
-      recipient,
-      maxFee: 1_000n,
-    }))
-      receipt = await client.waitForTransactionReceipt({
-        hash: await anvil.sendTransaction({ account: HOLDER, chain, ...call }),
-      });
-    const burn = receipt!.transactionHash;
+    const receipt = await burnTowardStellar(recipient);
+    const burn = receipt.transactionHash;
     const [{ args }] = parseEventLogs({
       abi: [parseAbiItem('event MessageSent(bytes message)')],
-      logs: receipt!.logs,
+      logs: receipt.logs,
     });
     await minute();
     expect(

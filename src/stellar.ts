@@ -6,6 +6,7 @@ import {
   isAddressEqual,
   isHex,
   parseAbiItem,
+  parseEventLogs,
   recoverMessageAddress,
   size,
   toEventSelector,
@@ -441,12 +442,25 @@ export async function requestStellarRelay(
   env: Env,
   config: Config,
 ): Promise<Response> {
-  enabledStellar(config);
+  const stellar = enabledStellar(config);
   const member = await signedInMember(request, env, config);
   const body = await readJson<{ network?: string; transaction_hash?: unknown }>(request);
   const network = enabledNetwork(config, body.network ?? '');
   if (!isHex(body.transaction_hash) || size(body.transaction_hash) !== 32)
     throw new HttpError(400, 'INVALID_REQUEST');
+  // Only a confirmed burn toward Stellar waits for the relayer: a hash Circle never attests would
+  // hold its place in the queue for days. (The app registers it again while it is not found.)
+  const receipt = await network.client
+    .getTransactionReceipt({ hash: body.transaction_hash })
+    .catch(() => null);
+  const burns = parseEventLogs({
+    abi: [DEPOSIT_FOR_BURN],
+    logs: (receipt?.logs ?? []).filter((log) =>
+      isAddressEqual(log.address, network.cctp.tokenMessenger),
+    ),
+  });
+  if (!burns.some(({ args }) => args.destinationDomain === stellar.network.cctp.domain))
+    throw new HttpError(404, 'BURN_TO_STELLAR_NOT_FOUND');
   await consumeDailyBudget(env, config, member.address);
   await env.WALLET_DB.prepare(
     `INSERT OR IGNORE INTO stellar_relays (source_network, transaction_hash, member_address, created_at)
@@ -645,7 +659,7 @@ async function relayBurns(
 ) {
   const { results } = await env.WALLET_DB.prepare(
     `SELECT source_network, transaction_hash, member_address FROM stellar_relays
-     WHERE relayed_hash IS NULL AND created_at > ? LIMIT 20`,
+     WHERE relayed_hash IS NULL AND created_at > ? ORDER BY created_at DESC LIMIT 20`,
   )
     .bind(Math.floor(Date.now() / 1000) - RELAY_SECONDS)
     .all<{ source_network: string; transaction_hash: string; member_address: Address }>();
