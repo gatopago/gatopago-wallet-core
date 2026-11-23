@@ -37,9 +37,9 @@ import { Keypair, nativeToScVal, rpc, Address as StellarAddress, xdr } from '@st
 import { stellarNetworks, walletContracts, walletNetworks } from '@gatopago/shared/networks';
 import { businessKey, businessKeyResource, businessSignInMessage } from '@gatopago/shared/passkey';
 import {
-  addSignerOperation,
   crosschainToStellarCalls,
   prepareStellarCall,
+  signerChangeOperations,
   signStellarAuth,
   stellarAccountAddress,
   stellarAccountExists,
@@ -1823,11 +1823,11 @@ describe('stellar', () => {
       });
     };
     const backup = await softwarePasskey();
-    const addBackup = addSignerOperation(
-      testnet,
-      stellar.account,
+    // Additions come first: the backup passkey as a new signer.
+    const [addBackup] = await signerChangeOperations(server, testnet, stellar.account, [
+      owner,
       passkeyOwner(walletContracts.webAuthnVerifier, backup.publicKey),
-    );
+    ]);
     // A passkey that does not own the account cannot, even sponsored.
     const forged = await submit(addBackup, await softwarePasskey());
     expect(forged.status).toBe(400);
@@ -1923,16 +1923,10 @@ describe('stellar', () => {
 
     expect((await api('stellar/account', { token, body: { initial_owners } })).status).toBe(200);
     const backup = await softwarePasskey();
-    const call = await prepareStellarCall(
-      server,
-      testnet,
-      sponsor,
-      addSignerOperation(
-        testnet,
-        stellar.account,
-        passkeyOwner(walletContracts.webAuthnVerifier, backup.publicKey),
-      ),
-    );
+    const [addBackup] = await signerChangeOperations(server, testnet, stellar.account, [
+      passkeyOwner(walletContracts.webAuthnVerifier, backup.publicKey),
+    ]);
+    const call = await prepareStellarCall(server, testnet, sponsor, addBackup);
     const auth = await signStellarAuth(testnet, call.auth, {
       owner: ed25519,
       validUntil: call.latestLedger + 60,
