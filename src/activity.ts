@@ -440,9 +440,10 @@ async function readHistories(env: Env, network: Network, budget: Budget) {
   }
 }
 
-interface TransferRow {
+/** A stored movement (`transfers`). Stellar hashes have no `0x`. */
+export interface StoredTransfer {
   network: string;
-  transaction_hash: Hex;
+  transaction_hash: string;
   log_index: number;
   block_number: number;
   timestamp: number;
@@ -451,6 +452,9 @@ interface TransferRow {
   amount: string;
   kind: string;
   token: string;
+}
+
+interface TransferRow extends StoredTransfer {
   username: string | null;
   display_name: string | null;
 }

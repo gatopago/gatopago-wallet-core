@@ -1,5 +1,5 @@
 import { getAddress, type Address, type Hex } from 'viem';
-import { coinBySymbol, notices } from './activity';
+import { coinBySymbol, notices, type StoredTransfer } from './activity';
 import type { Budget } from './budget';
 import type { Config } from './config';
 import { deliver, NOTIFY_SECONDS, type Notice } from './push';
@@ -10,17 +10,7 @@ const BATCH = 20;
 const ATTEMPTS = 5;
 const RETRY_SECONDS = 30;
 
-interface Pending {
-  network: string;
-  transaction_hash: string;
-  log_index: number;
-  block_number: number;
-  timestamp: number;
-  from_address: string;
-  to_address: string;
-  amount: string;
-  kind: string;
-  token: string;
+interface Pending extends StoredTransfer {
   notify_attempts: number;
 }
 
