@@ -11,14 +11,16 @@ overrides:
   picomatch@>=4.0.0 <4.0.4: '>=4.0.4'
   postcss@<8.5.23: '>=8.5.23'
   nanoid@<3.3.18: '>=3.3.18'
+  zod@>=4.0.0 <4.6.6: ^4.6.7
+  follow-redirects@>=1.16.0 <1.16.2: ^1.16.3
 
 importers:
 
   .:
     dependencies:
       '@gatopago/shared':
-        specifier: file:vendor/gatopago-shared-6.25.0.tgz
-        version: file:vendor/gatopago-shared-6.25.0.tgz(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)(typescript@6.0.3)(zod@4.4.3)
+        specifier: file:vendor/gatopago-shared-6.26.0.tgz
+        version: file:vendor/gatopago-shared-6.26.0.tgz(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)(typescript@6.0.3)(zod@4.6.7)
       '@stellar/stellar-sdk':
         specifier: 17.2.0
         version: 17.2.0(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)
@@ -27,7 +29,7 @@ importers:
         version: 6.2.12
       viem:
         specifier: 2.55.19
-        version: 2.55.19(typescript@6.0.3)(zod@4.4.3)
+        version: 2.55.19(typescript@6.0.3)(zod@4.6.7)
     devDependencies:
       '@cloudflare/vitest-pool-workers':
         specifier: 0.22.0
@@ -363,9 +365,9 @@ packages:
       '@noble/hashes':
         optional: true
 
-  '@gatopago/shared@file:vendor/gatopago-shared-6.25.0.tgz':
-    resolution: {integrity: sha512-yW90RRYf4LYqZPY2baSlX2YN3gAdyTWpyyVFvQVTVo/wu3p3fhNCM0ab8EabmCUNX6m+KeHj877fAXq/H/IXsQ==, tarball: file:vendor/gatopago-shared-6.25.0.tgz}
-    version: 6.25.0
+  '@gatopago/shared@file:vendor/gatopago-shared-6.26.0.tgz':
+    resolution: {integrity: sha512-IP/kAyTUyP9ws+SOVhe1ncA+H8snOrwUp/OP2m3AJvvohGzVa7T5RTcYGdgi6i5lFfAwGTIhugVdOYth5hkYjw==, tarball: file:vendor/gatopago-shared-6.26.0.tgz}
+    version: 6.26.0
     engines: {node: '>=24'}
     peerDependencies:
       '@category-labs/mera': 0.2.0
@@ -1004,7 +1006,7 @@ packages:
     resolution: {integrity: sha512-Ofer5QUnuUdTFsBRwARMoWKOH1ND5ehwYhJ3OJ/BQO+StkwQjHw0XyVh4vDttzHB7QOFhPHa/o413PJ82gU/Tg==}
     peerDependencies:
       typescript: 6.0.3
-      zod: ^3.22.0 || ^4.0.0
+      zod: ^4.6.7
     peerDependenciesMeta:
       typescript:
         optional: true
@@ -1234,8 +1236,8 @@ packages:
   flatted@3.4.4:
     resolution: {integrity: sha512-5+ybhBZANEJxaH3X5evAFatUxLfEHSr7n6kYJ+1Qd0mUqr4eu9gIf6GDbWHf8RJijHrjjO8G+la14SlL2SeS1Q==}
 
-  follow-redirects@1.16.0:
-    resolution: {integrity: sha512-y5rN/uOsadFT/JfYwhxRS5R7Qce+g3zG97+JrtFZlC9klX/W5hD7iiLzScI4nZqUS7DNUdhPgw4xI8W2LuXlUw==}
+  follow-redirects@1.16.3:
+    resolution: {integrity: sha512-toOSoqN6d51Wjf1aOFJYcoVv1aND9rj/CwjLU0Vz40oDuSpWDayCeKe4JpL5NL0WdFvoOOCI3BRo69HahjbR1A==}
     engines: {node: '>=4.0'}
     peerDependencies:
       debug: '*'
@@ -1815,8 +1817,8 @@ packages:
   youch@4.1.0-beta.10:
     resolution: {integrity: sha512-rLfVLB4FgQneDr0dv1oddCVZmKjcJ6yX6mS4pU82Mq/Dt9a3cLZQ62pDBL4AUO+uVrCvtWz3ZFUL2HFAFJ/BXQ==}
 
-  zod@4.4.3:
-    resolution: {integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==}
+  zod@4.6.7:
+    resolution: {integrity: sha512-g8W2D2kU6a8untc053fX1uVBKzM7yqAxW/3zwk83+6RyF2+SKOuV+c0wBDhUwzV1PaGapmZH+rmcUzPf+3CGwg==}
 
 snapshots:
 
@@ -1857,7 +1859,7 @@ snapshots:
       miniflare: 5.20260815.0-alpha
       vitest: 4.1.11(@types/node@24.13.6)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.1)(jiti@2.7.0)(yaml@2.9.1))
       wrangler: 4.124.0
-      zod: 4.4.3
+      zod: 4.6.7
     transitivePeerDependencies:
       - '@cloudflare/workers-types'
       - bufferutil
@@ -2018,13 +2020,13 @@ snapshots:
     optionalDependencies:
       '@noble/hashes': 2.4.0
 
-  '@gatopago/shared@file:vendor/gatopago-shared-6.25.0.tgz(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)(typescript@6.0.3)(zod@4.4.3)':
+  '@gatopago/shared@file:vendor/gatopago-shared-6.26.0.tgz(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)(typescript@6.0.3)(zod@4.6.7)':
     dependencies:
       '@scure/bip32': 1.7.0
       '@scure/bip39': 1.6.0
       '@stellar/stellar-sdk': 17.2.0(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)
-      ox: 0.14.34(typescript@6.0.3)(zod@4.4.3)
-      viem: 2.55.19(typescript@6.0.3)(zod@4.4.3)
+      ox: 0.14.34(typescript@6.0.3)(zod@4.6.7)
+      viem: 2.55.19(typescript@6.0.3)(zod@4.6.7)
     transitivePeerDependencies:
       - bufferutil
       - debug
@@ -2541,10 +2543,10 @@ snapshots:
       convert-source-map: 2.0.0
       tinyrainbow: 3.1.1
 
-  abitype@1.2.3(typescript@6.0.3)(zod@4.4.3):
+  abitype@1.2.3(typescript@6.0.3)(zod@4.6.7):
     optionalDependencies:
       typescript: 6.0.3
-      zod: 4.4.3
+      zod: 4.6.7
 
   acorn-jsx@5.3.2(acorn@8.18.0):
     dependencies:
@@ -2571,7 +2573,7 @@ snapshots:
 
   axios@1.20.0(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2):
     dependencies:
-      follow-redirects: 1.16.0(debug@4.4.3(supports-color@10.2.2))
+      follow-redirects: 1.16.3(debug@4.4.3(supports-color@10.2.2))
       form-data: 4.0.6
       https-proxy-agent: 5.0.1(supports-color@10.2.2)
       proxy-from-env: 2.1.0
@@ -2801,7 +2803,7 @@ snapshots:
 
   flatted@3.4.4: {}
 
-  follow-redirects@1.16.0(debug@4.4.3(supports-color@10.2.2)):
+  follow-redirects@1.16.3(debug@4.4.3(supports-color@10.2.2)):
     optionalDependencies:
       debug: 4.4.3(supports-color@10.2.2)
 
@@ -3020,7 +3022,7 @@ snapshots:
       type-check: 0.4.0
       word-wrap: 1.2.5
 
-  ox@0.14.34(typescript@6.0.3)(zod@4.4.3):
+  ox@0.14.34(typescript@6.0.3)(zod@4.6.7):
     dependencies:
       '@adraffy/ens-normalize': 1.11.1
       '@noble/ciphers': 1.3.0
@@ -3028,7 +3030,7 @@ snapshots:
       '@noble/hashes': 1.8.0
       '@scure/bip32': 1.7.0
       '@scure/bip39': 1.6.0
-      abitype: 1.2.3(typescript@6.0.3)(zod@4.4.3)
+      abitype: 1.2.3(typescript@6.0.3)(zod@4.6.7)
       eventemitter3: 5.0.1
     optionalDependencies:
       typescript: 6.0.3
@@ -3228,15 +3230,15 @@ snapshots:
     dependencies:
       punycode: 2.3.1
 
-  viem@2.55.19(typescript@6.0.3)(zod@4.4.3):
+  viem@2.55.19(typescript@6.0.3)(zod@4.6.7):
     dependencies:
       '@noble/curves': 1.9.1
       '@noble/hashes': 1.8.0
       '@scure/bip32': 1.7.0
       '@scure/bip39': 1.6.0
-      abitype: 1.2.3(typescript@6.0.3)(zod@4.4.3)
+      abitype: 1.2.3(typescript@6.0.3)(zod@4.6.7)
       isows: 1.0.7(ws@8.21.0)
-      ox: 0.14.34(typescript@6.0.3)(zod@4.4.3)
+      ox: 0.14.34(typescript@6.0.3)(zod@4.6.7)
       ws: 8.21.0
     optionalDependencies:
       typescript: 6.0.3
@@ -3366,4 +3368,4 @@ snapshots:
       cookie: 1.1.1
       youch-core: 0.3.3
 
-  zod@4.4.3: {}
+  zod@4.6.7: {}
