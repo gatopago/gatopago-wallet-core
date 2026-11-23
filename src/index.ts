@@ -5,6 +5,7 @@ import { deletePushToken, savePushToken } from './push';
 import { addApproval, readApprovals } from './approvals';
 import { createNonce, createSession, readSignup } from './auth';
 import { Budget } from './budget';
+import { readChanges } from './changes';
 import { readersHealth } from './cursors';
 import {
   approveBusinessLogin,
@@ -197,7 +198,7 @@ export default {
   },
 
   /**
-   * Every minute: adds new members to the webhooks and syncs Stellar. Every 10 minutes: reads what
+   * Every minute: adds new members to the webhooks, follows owner changes and syncs Stellar. Every 10 minutes: reads what
    * webhooks missed. Hourly: forgets expired nonces, old counters and old relays.
    */
   async scheduled(controller, env) {
@@ -209,6 +210,7 @@ export default {
     const run = (job: Promise<void>) => job.catch((error: unknown) => console.error(error));
     if (controller.cron === '* * * * *') {
       await run(watchMembers(env, settings, budget));
+      await run(readChanges(env, settings, budget));
       await run(syncStellar(env, settings, budget));
       return sendNotifications(env, settings, budget);
     }

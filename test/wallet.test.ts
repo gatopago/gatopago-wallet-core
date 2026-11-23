@@ -18,6 +18,7 @@ import {
   erc20Abi,
   hexToBytes,
   http,
+  keccak256,
   pad,
   parseEther,
   sha256,
@@ -49,6 +50,11 @@ import {
 } from '@gatopago/shared/stellar';
 import { swapPools } from '@gatopago/shared/swap';
 import {
+  REPLAYABLE_NONCE_KEY,
+  applyChangeCall,
+  cancelChangeCall,
+  changeId,
+  encodeApplyApproval,
   gatopagoAccountAbi,
   keyOwner,
   passkeyOwner,
@@ -62,6 +68,7 @@ import { coinOf, notices, readMemberHistories, reconcileTransfers } from '../src
 import { amountText } from '../src/push';
 import { watchMembers } from '../src/alchemy';
 import { Budget } from '../src/budget';
+import { readChanges } from '../src/changes';
 import { config, type Network } from '../src/config';
 import { indexTransfers } from '../src/stellar';
 import { sendNotifications } from '../src/notifications';
@@ -158,6 +165,21 @@ function api(
       body: init.body === undefined ? undefined : JSON.stringify(init.body),
     }),
   );
+}
+
+/** Sends `account`'s operations through Wallet Core's bundler and paymaster, as the app does. */
+function bundlerFor(account: GatoPagoAccount, token: string) {
+  const transport = (service: string) =>
+    http(`${API}/${service}/eip155:${chain.id}`, {
+      fetchFn: (url, init) => exports.default.fetch(new Request(url, init)),
+      fetchOptions: { headers: { Authorization: `Bearer ${token}` } },
+    });
+  return createBundlerClient({
+    account,
+    client,
+    transport: transport('bundler'),
+    paymaster: createPaymasterClient({ transport: transport('paymaster') }),
+  });
 }
 
 /** Each test account signs in from its own address, as people do, within the per-IP rate limit. */
@@ -680,10 +702,22 @@ describe('groups', () => {
 });
 
 describe('removing an owner', () => {
-  it('ends the sessions of an owner the account removes', async () => {
+  it('lists and alerts a scheduled removal, keeps sessions if cancelled, ends them once applied', async () => {
     const account = await newAccount();
-    const token = await member(account);
-    let current = token;
+    let token = await member(account);
+    const device = `fcm-device-${'r'.repeat(40)}`;
+    await api('push-tokens', { token, body: { token: device, language: 'es' } });
+    const sent: { message: { data: Record<string, string> } }[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === 'https://oauth2.googleapis.com/token')
+        return Response.json({ access_token: 'google-token', expires_in: 3600 });
+      if (url === 'https://fcm.googleapis.com/v1/projects/gatopago-test/messages:send') {
+        sent.push(JSON.parse(String(init?.body)));
+        return new Response(null, { status: 200 });
+      }
+      return realFetch(input, init);
+    });
     const backupPasskey = await softwarePasskey();
     const backup = await toGatoPagoAccount({
       client,
@@ -691,46 +725,96 @@ describe('removing an owner', () => {
       contracts: walletContracts,
       initialOwners: account.initialOwners,
     });
-    const backupOwner = passkeyOwner(walletContracts.webAuthnVerifier, backupPasskey.publicKey);
-    const approve = async (signer: GatoPagoAccount, sequence: bigint, call: Hex) =>
-      api(`approvals/${account.address}`, {
-        token: current,
-        body: {
-          call,
-          signature: await signApproval(signer, sequence, call),
-          initial_owners: account.initialOwners,
-        },
+    const path = `approvals/${account.address}`;
+    const changes = async () => (await (await api(path)).json<{ changes: unknown[] }>()).changes;
+    const readAll = () => readChanges(env, config(env), new Budget(45));
+    // The app stores each approval, then applies it on the network.
+    const approve = async (signer: GatoPagoAccount, sequence: bigint, call: Hex) => {
+      const signature = await signApproval(signer, sequence, call);
+      const body = { call, signature, initial_owners: account.initialOwners };
+      expect(await (await api(path, { token, body })).json()).toEqual({
+        sequence: Number(sequence),
       });
+      const bundler = bundlerFor(signer, token);
+      const hash = await bundler.sendUserOperation({
+        callData: encodeApplyApproval(sequence, call),
+        nonce: await signer.getNonce({ key: REPLAYABLE_NONCE_KEY }),
+        signature,
+      });
+      expect((await bundler.waitForUserOperationReceipt({ hash })).success).toBe(true);
+    };
+    const send = async (signer: GatoPagoAccount, calls: { to: Hex; data: Hex }[]) => {
+      const bundler = bundlerFor(signer, token);
+      const hash = await bundler.sendUserOperation({ calls });
+      expect((await bundler.waitForUserOperationReceipt({ hash })).success).toBe(true);
+    };
     const addBackup = encodeFunctionData({
       abi: gatopagoAccountAbi,
       functionName: 'addOwners',
-      args: [[backupOwner]],
+      args: [[passkeyOwner(walletContracts.webAuthnVerifier, backupPasskey.publicKey)]],
     });
-    // Adding a key keeps every session.
-    expect(await (await approve(account, 0n, addBackup)).json()).toEqual({ sequence: 0 });
-    expect((await api('profile', { token })).status).toBe(200);
-
-    // The phone is lost: the backup removes it.
     const removePhone = encodeFunctionData({
       abi: gatopagoAccountAbi,
       functionName: 'removeOwners',
       args: [[account.initialOwners[0]]],
     });
-    const removed = await (
-      await approve(backup, 1n, removePhone)
-    ).json<{
-      session: { token: string };
-    }>();
-    // Every earlier session ends (it may be the phone's); the backup that signed gets a new one.
+
+    await readAll(); // where the reader starts
+    await approve(account, 0n, addBackup);
+    // Whoever holds the backup removes the phone: scheduled for two days, listed and told once.
+    await approve(backup, 1n, removePhone);
+    await readAll();
+    await readAll();
+    expect(await changes()).toEqual([
+      {
+        network: 'eip155:421614',
+        id: changeId(1n, removePhone),
+        sequence: 1,
+        call: removePhone.toLowerCase(),
+        ready_at: expect.any(Number),
+      },
+    ]);
+    expect(sent.map(({ message }) => message.data)).toEqual([
+      {
+        type: 'security',
+        tag: `change:${changeId(1n, removePhone)}`,
+        title: 'Se va a quitar una llave de tu cuenta',
+        body: 'En 48 horas. Si no fuiste tú, cancélalo en Seguridad.',
+        link: '/settings/security',
+      },
+    ]);
+    // The phone still owns the account: its sessions go on, and it cancels with a normal operation.
+    expect((await api('profile', { token })).status).toBe(200);
+    await send(account, [cancelChangeCall(account.address, changeId(1n, removePhone))]);
+    await readAll();
+    expect(await changes()).toEqual([]);
+    expect((await api('profile', { token })).status).toBe(200);
+
+    // Scheduled again, and the two days pass (its readyAt, in the account's ERC-7201 slot, is moved).
+    await approve(backup, 2n, removePhone);
+    await readAll();
+    const pendingChanges = '0x1b1ed623e9650e2fb911fb864c8312801e1a16b36f065ac1390e3e6fb2698b00';
+    await anvil.setStorageAt({
+      address: account.address,
+      index: keccak256(
+        encodeAbiParameters(
+          [{ type: 'bytes32' }, { type: 'bytes32' }],
+          [changeId(2n, removePhone), pendingChanges],
+        ),
+      ),
+      value: pad('0x01'),
+    });
+    // Due, any key applies it with a normal operation: every session ends (one may be the phone's).
+    await send(backup, [applyChangeCall(account.address, 2n, removePhone)]);
+    await readAll();
+    expect(await changes()).toEqual([]);
     expect((await api('profile', { token })).status).toBe(401);
     // Flow asks Wallet Core about every session: the ended one is ended there too.
     expect((await api('auth/session', { token })).status).toBe(401);
-    current = removed.session.token;
-    expect(await (await api('auth/session', { token: current })).json()).toEqual({
-      user_id: expect.stringMatching(/^usr_/),
-      address: account.address.toLowerCase(),
-    });
-    expect((await api('profile', { token: current })).status).toBe(200);
+    // The backup signs in again; the phone no longer can.
+    token = (await (await signIn(backup)).json<{ token: string }>()).token;
+    expect((await api('profile', { token })).status).toBe(200);
+    expect(await (await signIn(account)).json()).toEqual({ error_code: 'SIGNATURE_INVALID' });
   });
 });
 
@@ -780,19 +864,6 @@ describe('contacts and invitations', () => {
 });
 
 describe('sponsored operations', () => {
-  const bundlerFor = (account: GatoPagoAccount, token: string) => {
-    const transport = (service: string) =>
-      http(`${API}/${service}/eip155:${chain.id}`, {
-        fetchFn: (url, init) => exports.default.fetch(new Request(url, init)),
-        fetchOptions: { headers: { Authorization: `Bearer ${token}` } },
-      });
-    return createBundlerClient({
-      account,
-      client,
-      transport: transport('bundler'),
-      paymaster: createPaymasterClient({ transport: transport('paymaster') }),
-    });
-  };
   const approveNothing = {
     to: usdc,
     data: encodeFunctionData({ abi: erc20Abi, functionName: 'approve', args: [usdc, 0n] }),
@@ -888,6 +959,7 @@ describe('approvals', () => {
     expect(await (await api(path)).json()).toEqual({
       initial_owners: account.initialOwners,
       approvals: [{ sequence: 0, call, signature }],
+      changes: [],
     });
   });
 });

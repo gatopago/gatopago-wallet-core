@@ -118,46 +118,100 @@ export async function deliver(
   )
     .bind(stored(notice.from), stored(notice.to))
     .all<{ token: string; language: string; sender: string | null }>();
-  const renewing = !accessToken || accessToken.expiresAt <= Math.floor(Date.now() / 1000) + 60;
-  // Every device at once or none: a retry sends to all of them again (the tag keeps it one).
-  if (!budget.take(results.length + (renewing && results.length > 0 ? 1 : 0))) return 'budget';
-  let outcome: 'sent' | 'retry' = 'sent';
-  for (const { token, language, sender } of results) {
+  return sendToDevices(env, config.firebase, results, budget, ({ language, sender }) => {
     const en = language === 'en';
     const value = `${amountText(notice.value, notice.coin.decimals, en)} ${notice.coin.symbol}`;
     const arrived = notice.origin !== undefined;
     const from = sender ? `@${sender}` : short(notice.from);
     const origin = notice.origin ?? (en ? 'another network' : 'otra red');
+    return {
+      type: 'movement',
+      tag: notice.tag,
+      title: arrived
+        ? en
+          ? `${value} arrived`
+          : `Llegaron ${value}`
+        : en
+          ? `You received ${value}`
+          : `Recibiste ${value}`,
+      body: arrived
+        ? en
+          ? `From ${origin}`
+          : `Desde ${origin}`
+        : en
+          ? `From ${from}`
+          : `De ${from}`,
+      // The app opens in the device's language: English pages live under `/en`.
+      link: en ? '/en/statement' : '/statement',
+    };
+  });
+}
+
+/**
+ * Tells the member of `account` that it scheduled removing keys or, if `upgrade`, changing its
+ * contract: whoever did not do it has two days to cancel it in Security. Outcomes as `deliver`.
+ */
+export async function alertChange(
+  env: Env,
+  config: Config,
+  change: { account: string; id: string; upgrade: boolean },
+  budget: Budget,
+): Promise<'sent' | 'retry' | 'budget'> {
+  if (!config.firebase) return 'sent';
+  const { results } = await env.WALLET_DB.prepare(
+    `SELECT push_tokens.token, push_tokens.language
+     FROM members JOIN push_tokens ON push_tokens.member_id = members.id
+     WHERE members.address = ?`,
+  )
+    .bind(change.account)
+    .all<{ token: string; language: string }>();
+  return sendToDevices(env, config.firebase, results, budget, ({ language }) => {
+    const en = language === 'en';
+    return {
+      type: 'security',
+      // One notification per change, though each network schedules it.
+      tag: `change:${change.id}`,
+      title: change.upgrade
+        ? en
+          ? "Your account's contract is about to change"
+          : 'Se va a cambiar el contrato de tu cuenta'
+        : en
+          ? 'A key is about to be removed from your account'
+          : 'Se va a quitar una llave de tu cuenta',
+      body: en
+        ? "In 48 hours. If it wasn't you, cancel it in Security."
+        : 'En 48 horas. Si no fuiste tú, cancélalo en Seguridad.',
+      link: en ? '/en/settings/security' : '/settings/security',
+    };
+  });
+}
+
+/**
+ * Sends each device its data message, every device at once or none: a retry sends to all of them
+ * again (the tag keeps it one notification).
+ */
+async function sendToDevices<Device extends { token: string }>(
+  env: Env,
+  firebase: NonNullable<Config['firebase']>,
+  devices: readonly Device[],
+  budget: Budget,
+  data: (device: Device) => Record<string, string>,
+): Promise<'sent' | 'retry' | 'budget'> {
+  const renewing = !accessToken || accessToken.expiresAt <= Math.floor(Date.now() / 1000) + 60;
+  if (!budget.take(devices.length + (renewing && devices.length > 0 ? 1 : 0))) return 'budget';
+  let outcome: 'sent' | 'retry' = 'sent';
+  for (const device of devices) {
     const message = {
-      token,
-      data: {
-        type: 'movement',
-        tag: notice.tag,
-        title: arrived
-          ? en
-            ? `${value} arrived`
-            : `Llegaron ${value}`
-          : en
-            ? `You received ${value}`
-            : `Recibiste ${value}`,
-        body: arrived
-          ? en
-            ? `From ${origin}`
-            : `Desde ${origin}`
-          : en
-            ? `From ${from}`
-            : `De ${from}`,
-        // The app opens in the device's language: English pages live under `/en`.
-        link: en ? '/en/statement' : '/statement',
-      },
+      token: device.token,
+      data: data(device),
       webpush: { headers: { Urgency: 'high' } },
     };
     const response = await fetch(
-      `https://fcm.googleapis.com/v1/projects/${config.firebase.projectId}/messages:send`,
+      `https://fcm.googleapis.com/v1/projects/${firebase.projectId}/messages:send`,
       {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${await firebaseAccessToken(config.firebase)}`,
+          Authorization: `Bearer ${await firebaseAccessToken(firebase)}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ message }),
@@ -165,7 +219,9 @@ export async function deliver(
     ).catch(() => null);
     // An uninstalled app or revoked permission leaves a token FCM no longer knows.
     if (response?.status === 404)
-      await env.WALLET_DB.prepare('DELETE FROM push_tokens WHERE token = ?').bind(token).run();
+      await env.WALLET_DB.prepare('DELETE FROM push_tokens WHERE token = ?')
+        .bind(device.token)
+        .run();
     else if (!response?.ok) {
       console.error('FCM send failed', response?.status ?? 'network');
       outcome = 'retry';

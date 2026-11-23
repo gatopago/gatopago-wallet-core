@@ -1,15 +1,15 @@
 import { getAddress, isAddressEqual, isHex, type Address, type Hex, type PublicClient } from 'viem';
 import { walletContracts } from '@gatopago/shared/networks';
-import { gatopagoAccountFactoryAbi, ownersAfter, verifyApproval } from '@gatopago/shared/wallet';
+import { accountOwners, gatopagoAccountFactoryAbi, verifyApproval } from '@gatopago/shared/wallet';
 import type { Config } from './config';
 import { HttpError, json, rateLimit, readJson } from './http';
 import { memberByAddress, type Member } from './members';
 import { signedInMember } from './profile';
-import { issueSession } from './session';
 
 /**
  * Owner approvals (owner changes, upgrades) applied on one network, kept so they can be applied in
- * order on the others. They are public: applying one still needs sponsorship.
+ * order on the others, and the changes they scheduled that are neither applied nor cancelled yet,
+ * per network (`readChanges`). All public, as onchain: applying one still needs sponsorship.
  */
 export async function readApprovals(
   request: Request,
@@ -19,13 +19,23 @@ export async function readApprovals(
   await rateLimit(env, request, 'approvals');
   const member = await memberByAddress(env.WALLET_DB, account);
   if (!member) throw new HttpError(404, 'ACCOUNT_NOT_FOUND');
-  return json({ initial_owners: member.initialOwners, approvals: await approvals(env, account) });
+  const { results: changes } = await env.WALLET_DB.prepare(
+    `SELECT network, id, sequence, call, ready_at FROM owner_changes WHERE account = ?
+     ORDER BY sequence, network`,
+  )
+    .bind(account.toLowerCase())
+    .all();
+  return json({
+    initial_owners: member.initialOwners,
+    approvals: await approvals(env, account),
+    changes,
+  });
 }
 
 /**
- * `POST /app/v1/approvals/:account`: stores the account's next approval once verified. One that
- * removes owners also ends every session issued before it (any may be a removed owner's) and
- * answers a new `session` for this device, unless the key that signed it is among the removed.
+ * `POST /app/v1/approvals/:account`: stores the account's next approval once one of the owners it
+ * has on the home network signed it. Removing a key only schedules it: the key's sessions end once
+ * the account applies it (`readChanges`).
  */
 export async function addApproval(
   request: Request,
@@ -42,58 +52,40 @@ export async function addApproval(
   const initialOwners =
     member.initialOwners ?? (await provenInitialOwners(client, account, body.initial_owners));
   const previous = await approvals(env, account);
-  const signer = await verifyApproval(client, {
+  const owners = await accountOwners(client, {
     account,
     initialOwners,
-    previous: previous.map((approval) => approval.call),
+    calls: previous.map((approval) => approval.call),
+  });
+  const signer = await verifyApproval(client, {
+    account,
+    owners,
+    sequence: previous.length,
     call: body.call,
     signature: body.signature,
   });
   if (!signer) throw new HttpError(400, 'APPROVAL_INVALID');
-  const before = ownersAfter(
-    initialOwners,
-    previous.map((approval) => approval.call),
-  );
-  const after = ownersAfter(before, [body.call]);
-  const removed = before.filter((owner) => !after.includes(owner));
-
-  const now = Math.floor(Date.now() / 1000);
-  // The session generation after removing owners: every earlier session stops counting.
-  let generation: number | null = null;
   try {
-    const results = await env.WALLET_DB.batch<{ session_generation: number }>([
-      ...(removed.length > 0
-        ? [
-            env.WALLET_DB.prepare(
-              `UPDATE members SET session_generation = session_generation + 1 WHERE id = ?
-               RETURNING session_generation`,
-            ).bind(member.id),
-          ]
-        : []),
+    await env.WALLET_DB.batch([
       env.WALLET_DB.prepare(
         'UPDATE members SET initial_owners = ? WHERE address = ? AND initial_owners IS NULL',
       ).bind(JSON.stringify(initialOwners), account.toLowerCase()),
       env.WALLET_DB.prepare(
         'INSERT INTO approvals (account, sequence, call, signature, created_at) VALUES (?, ?, ?, ?, ?)',
-      ).bind(account.toLowerCase(), previous.length, body.call, body.signature, now),
+      ).bind(
+        account.toLowerCase(),
+        previous.length,
+        body.call,
+        body.signature,
+        Math.floor(Date.now() / 1000),
+      ),
     ]);
-    if (removed.length > 0) generation = results[0].results[0].session_generation;
   } catch (error) {
     if (String(error).includes('UNIQUE constraint failed'))
       throw new HttpError(409, 'APPROVAL_CONFLICT');
     throw error;
   }
-  const session =
-    generation !== null && !removed.includes(signer)
-      ? await issueSession(config, { ...member, sessionGeneration: generation })
-      : null;
-  return json(
-    {
-      sequence: previous.length,
-      ...(session && { session: { token: session.token, expires_at: session.expiresAt } }),
-    },
-    201,
-  );
+  return json({ sequence: previous.length }, 201);
 }
 
 async function approvals(env: Env, account: Address) {
@@ -125,8 +117,8 @@ export async function provenInitialOwners(
 }
 
 /**
- * The account's owners now: its initial owners (proven against the factory when the database does
- * not know them yet, then kept) and the approved changes.
+ * The account's owners on the home network (`accountOwners`), from its initial owners (proven
+ * against the factory when the database does not know them yet, then kept) and its approvals.
  */
 export async function currentOwners(
   env: Env,
@@ -145,8 +137,9 @@ export async function currentOwners(
       .bind(JSON.stringify(initialOwners), member.address.toLowerCase())
       .run();
   const changes = await approvals(env, member.address);
-  return ownersAfter(
+  return accountOwners(client, {
+    account: member.address,
     initialOwners,
-    changes.map((approval) => approval.call),
-  );
+    calls: changes.map((approval) => approval.call),
+  });
 }
